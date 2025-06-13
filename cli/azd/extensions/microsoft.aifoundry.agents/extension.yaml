@@ -5,6 +5,6 @@ description: Manage agents in AI Foundry
 displayName: AIFoundry Agents
 id: microsoft.aifoundry.agents
 language: dotnet
-namespace: AIFoundry.Agents
-usage: azd AIFoundry.Agents <command> [options]
+namespace: foundry
+usage: azd foundry <command> [options]
 version: 0.0.1
