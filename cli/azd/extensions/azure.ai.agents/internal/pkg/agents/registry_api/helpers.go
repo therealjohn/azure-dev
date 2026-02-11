@@ -274,7 +274,6 @@ func ConvertParameters(parameters map[string]OpenApiParameter) (*agent_yaml.Prop
 func ProcessManifestParameters(ctx context.Context, manifest *agent_yaml.AgentManifest, azdClient *azdext.AzdClient, noPrompt bool) (*agent_yaml.AgentManifest, error) {
 	// If no parameters are defined, return the manifest as-is
 	if len(manifest.Parameters.Properties) == 0 {
-		fmt.Println("The manifest does not contain parameters that need to be configured.")
 		return manifest, nil
 	}
 
@@ -474,8 +473,6 @@ func injectParameterValues(template string, paramValues ParameterValues) ([]byte
 	// Check for any remaining unreplaced placeholders
 	if strings.Contains(template, "{{") && strings.Contains(template, "}}") {
 		fmt.Println("Warning: Template contains unresolved placeholders.")
-	} else {
-		fmt.Println("No remaining placeholders found.")
 	}
 
 	return []byte(template), nil

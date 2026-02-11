@@ -175,9 +175,6 @@ func newInitCommand(rootFlags rootFlagsDefinition) *cobra.Command {
 }
 
 func (a *InitAction) Run(ctx context.Context) error {
-	color.Green("Initializing AI agent project...")
-	fmt.Println()
-
 	// If src path is absolute, convert it to relative path compared to the azd project path
 	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
 		projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
@@ -246,14 +243,20 @@ func (a *InitAction) Run(ctx context.Context) error {
 		}
 
 		if localManifest != nil {
+			// Default src to current directory when not specified
+			srcDir := a.flags.src
+			if srcDir == "" {
+				srcDir = "."
+			}
+
 			// Write the manifest to a file in the src directory
-			manifestPath, err := a.writeManifestToSrcDir(localManifest, a.flags.src)
+			manifestPath, err := a.writeManifestToSrcDir(localManifest, srcDir)
 			if err != nil {
 				return fmt.Errorf("failed to write manifest to src directory: %w", err)
 			}
 
 			// Use the manifest file path to download/process the agent
-			agentManifest, targetDir, err := a.downloadAgentYaml(ctx, manifestPath, a.flags.src)
+			agentManifest, targetDir, err := a.downloadAgentYaml(ctx, manifestPath, srcDir)
 			if err != nil {
 				return fmt.Errorf("downloading agent.yaml from local manifest: %w", err)
 			}
@@ -263,7 +266,14 @@ func (a *InitAction) Run(ctx context.Context) error {
 				return fmt.Errorf("failed to add agent to azure.yaml: %w", err)
 			}
 
-			color.Green("\nLocal AI agent definition added to your azd project successfully!")
+			if srcDir == "." {
+				fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString("agent.yaml"))
+			} else {
+				fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString("%s/agent.yaml", srcDir))
+			}
+
+			fmt.Println("\nYou can customize environment variables, cpu, memory, and replica settings in the agent.yaml.")
+			fmt.Printf("Next steps: Run %s to deploy your agent to Microsoft Foundry.\n", color.HiBlueString("azd up"))
 		}
 	}
 
@@ -285,24 +295,8 @@ func ensureProject(ctx context.Context, flags *initFlags, azdClient *azdext.AzdC
 	if err != nil {
 		fmt.Println("Lets get your project initialized.")
 
-		// Environment creation is handled separately in ensureEnvironment
-		initArgs := []string{"init", "-t", "Azure-Samples/azd-ai-starter-basic"}
-
-		// We don't have a project yet
-		// Dispatch a workflow to init the project
-		workflow := &azdext.Workflow{
-			Name: "init",
-			Steps: []*azdext.WorkflowStep{
-				{Command: &azdext.WorkflowCommand{Args: initArgs}},
-			},
-		}
-
-		_, err := azdClient.Workflow().Run(ctx, &azdext.RunWorkflowRequest{
-			Workflow: workflow,
-		})
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize project: %w", err)
+		if err := scaffoldTemplate(ctx, azdClient, "therealjohn/azd-ai-starter-basic", "main"); err != nil {
+			return nil, fmt.Errorf("failed to scaffold template: %w", err)
 		}
 
 		projectResponse, err = azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
@@ -320,6 +314,215 @@ func ensureProject(ctx context.Context, flags *initFlags, azdClient *azdext.AzdC
 	return projectResponse.Project, nil
 }
 
+// templateFileInfo represents a file from the GitHub template repository.
+type templateFileInfo struct {
+	Path     string // Relative path in the repo
+	URL      string // Download URL for the file content
+	Collides bool   // Whether the file already exists locally
+}
+
+// scaffoldTemplate downloads a GitHub template repo into the current directory,
+// checking for file collisions before writing. Files that don't collide are shown
+// in green; colliding files are shown in yellow and the user is prompted for how
+// to handle them.
+func scaffoldTemplate(ctx context.Context, azdClient *azdext.AzdClient, repoSlug string, branch string) error {
+	// 1. Fetch the recursive file tree from GitHub
+	apiUrl := fmt.Sprintf("https://api.github.com/repos/%s/git/trees/%s?recursive=1", repoSlug, branch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiUrl, nil)
+	if err != nil {
+		return fmt.Errorf("creating tree request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching repo tree: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetching repo tree: status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading tree response: %w", err)
+	}
+
+	var treeResp struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"` // "blob" or "tree"
+		} `json:"tree"`
+	}
+	if err := json.Unmarshal(body, &treeResp); err != nil {
+		return fmt.Errorf("parsing tree response: %w", err)
+	}
+
+	// Collect only files (blobs)
+	var files []templateFileInfo
+	for _, entry := range treeResp.Tree {
+		if entry.Type != "blob" {
+			continue
+		}
+		downloadURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s", repoSlug, branch, entry.Path)
+		collides := false
+		if _, statErr := os.Stat(entry.Path); statErr == nil {
+			collides = true
+		}
+		files = append(files, templateFileInfo{
+			Path:     entry.Path,
+			URL:      downloadURL,
+			Collides: collides,
+		})
+	}
+
+	if len(files) == 0 {
+		return fmt.Errorf("template repository %s has no files", repoSlug)
+	}
+
+	// Sort by path for consistent display
+	slices.SortFunc(files, func(a, b templateFileInfo) int {
+		return strings.Compare(a.Path, b.Path)
+	})
+
+	// 2. Classify into new and colliding
+	var newFiles, collidingFiles []templateFileInfo
+	for _, f := range files {
+		if f.Collides {
+			collidingFiles = append(collidingFiles, f)
+		} else {
+			newFiles = append(newFiles, f)
+		}
+	}
+
+	// 3. Display the file list
+	fmt.Print("\nThe following files will be created from the starter template:\n\n")
+	for _, f := range files {
+		if f.Collides {
+			fmt.Printf("  %s  %s\n", color.YellowString("!"), color.YellowString(f.Path))
+		} else {
+			fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(f.Path))
+		}
+	}
+	fmt.Println()
+
+	// 4. If there are collisions, show warning and prompt for resolution
+	overwriteCollisions := false
+	if len(collidingFiles) > 0 {
+		fmt.Printf("%s %d file(s) already exist and would be overwritten.\n\n",
+			color.YellowString("Warning:"), len(collidingFiles))
+
+		conflictChoices := []*azdext.SelectChoice{
+			{Label: "Overwrite existing files", Value: "overwrite"},
+			{Label: "Skip existing files (keep my versions)", Value: "skip"},
+			{Label: "Cancel", Value: "cancel"},
+		}
+
+		conflictResp, err := azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+			Options: &azdext.SelectOptions{
+				Message: "How would you like to handle existing files?",
+				Choices: conflictChoices,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("prompting for conflict resolution: %w", err)
+		}
+
+		selectedValue := conflictChoices[*conflictResp.Value].Value
+		switch selectedValue {
+		case "overwrite":
+			overwriteCollisions = true
+		case "skip":
+			overwriteCollisions = false
+		case "cancel":
+			return fmt.Errorf("operation cancelled by user")
+		}
+	} else {
+		// No collisions - confirm to proceed
+		confirmResp, err := azdClient.Prompt().Confirm(ctx, &azdext.ConfirmRequest{
+			Options: &azdext.ConfirmOptions{
+				Message:      "Initialize the starter template?",
+				DefaultValue: to.Ptr(true),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("prompting for confirmation: %w", err)
+		}
+		if !*confirmResp.Value {
+			return fmt.Errorf("operation cancelled by user")
+		}
+	}
+
+	// 5. Download and write files
+	filesToWrite := newFiles
+	if overwriteCollisions {
+		filesToWrite = files
+	}
+
+	spinner := ux.NewSpinner(&ux.SpinnerOptions{
+		Text:        fmt.Sprintf("Downloading template (%d files)...", len(filesToWrite)),
+		ClearOnStop: true,
+	})
+	if err := spinner.Start(ctx); err != nil {
+		return fmt.Errorf("starting spinner: %w", err)
+	}
+
+	for _, f := range filesToWrite {
+		// Create parent directories
+		dir := filepath.Dir(f.Path)
+		if dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				_ = spinner.Stop(ctx)
+				return fmt.Errorf("creating directory %s: %w", dir, err)
+			}
+		}
+
+		// Download file content
+		fileReq, err := http.NewRequestWithContext(ctx, http.MethodGet, f.URL, nil)
+		if err != nil {
+			_ = spinner.Stop(ctx)
+			return fmt.Errorf("creating request for %s: %w", f.Path, err)
+		}
+
+		fileResp, err := http.DefaultClient.Do(fileReq)
+		if err != nil {
+			_ = spinner.Stop(ctx)
+			return fmt.Errorf("downloading %s: %w", f.Path, err)
+		}
+
+		content, err := io.ReadAll(fileResp.Body)
+		fileResp.Body.Close()
+		if err != nil {
+			_ = spinner.Stop(ctx)
+			return fmt.Errorf("reading %s: %w", f.Path, err)
+		}
+
+		if fileResp.StatusCode != http.StatusOK {
+			_ = spinner.Stop(ctx)
+			return fmt.Errorf("downloading %s: status %d", f.Path, fileResp.StatusCode)
+		}
+
+		if err := os.WriteFile(f.Path, content, 0644); err != nil {
+			_ = spinner.Stop(ctx)
+			return fmt.Errorf("writing %s: %w", f.Path, err)
+		}
+	}
+
+	if err := spinner.Stop(ctx); err != nil {
+		return fmt.Errorf("stopping spinner: %w", err)
+	}
+
+	skipped := len(files) - len(filesToWrite)
+	if skipped > 0 {
+		fmt.Printf("  Template initialized: %d file(s) written, %d file(s) skipped.\n", len(filesToWrite), skipped)
+	} else {
+		fmt.Printf("  Template initialized: %d file(s) written.\n", len(filesToWrite))
+	}
+
+	return nil
+}
+
 func getExistingEnvironment(ctx context.Context, flags *initFlags, azdClient *azdext.AzdClient) *azdext.Environment {
 	var env *azdext.Environment
 	if flags.env == "" {
@@ -335,6 +538,37 @@ func getExistingEnvironment(ctx context.Context, flags *initFlags, azdClient *az
 	}
 
 	return env
+}
+
+// createEnvironment creates a new azd environment with the given name and sets
+// it on the InitAction so subsequent calls can use it.
+func (a *InitAction) createEnvironment(ctx context.Context, envName string) error {
+	envName = sanitizeAgentName(envName)
+
+	workflow := &azdext.Workflow{
+		Name: "env new",
+		Steps: []*azdext.WorkflowStep{
+			{Command: &azdext.WorkflowCommand{Args: []string{"env", "new", envName}}},
+		},
+	}
+
+	_, err := a.azdClient.Workflow().Run(ctx, &azdext.RunWorkflowRequest{
+		Workflow: workflow,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create environment %s: %w", envName, err)
+	}
+
+	fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(".azure/%s/.env", envName))
+
+	a.flags.env = envName
+	env := getExistingEnvironment(ctx, a.flags, a.azdClient)
+	if env == nil {
+		return fmt.Errorf("environment %s was created but could not be found", envName)
+	}
+
+	a.environment = env
+	return nil
 }
 
 func ensureEnvironment(ctx context.Context, flags *initFlags, azdClient *azdext.AzdClient) (*azdext.Environment, error) {
@@ -382,21 +616,31 @@ func ensureEnvironment(ctx context.Context, flags *initFlags, azdClient *azdext.
 	// Get specified or current environment if it exists
 	existingEnv := getExistingEnvironment(ctx, flags, azdClient)
 	if existingEnv == nil {
-		// Dispatch `azd env new` to create a new environment with interactive flow
-		fmt.Println("Lets create a new default azd environment for your project.")
-
-		envArgs := []string{"env", "new"}
-		if flags.env != "" {
-			envArgs = append(envArgs, flags.env)
+		// For the local-code path (no --manifest, no --project-id, no -e flag),
+		// defer environment creation until after the agent name is known so we
+		// can name the environment "{agent-name}-dev".
+		if flags.manifestPointer == "" && flags.projectResourceId == "" && flags.env == "" {
+			return nil, nil
 		}
+
+		// Auto-generate environment name from the flag or current directory name
+		envName := flags.env
+		if envName == "" {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get current directory: %w", err)
+			}
+			envName = sanitizeAgentName(filepath.Base(cwd)) + "-dev"
+		}
+
+		envArgs := []string{"env", "new", envName}
 
 		if flags.projectResourceId != "" {
 			envArgs = append(envArgs, "--subscription", foundryProject.SubscriptionId)
 			envArgs = append(envArgs, "--location", foundryProjectLocation)
 		}
 
-		// Dispatch a workflow to create a new environment
-		// Handles both interactive and no-prompt flows
+		// Dispatch a workflow to create the environment non-interactively
 		workflow := &azdext.Workflow{
 			Name: "env new",
 			Steps: []*azdext.WorkflowStep{
@@ -412,6 +656,7 @@ func ensureEnvironment(ctx context.Context, flags *initFlags, azdClient *azdext.
 		}
 
 		// Re-fetch the environment after creation
+		flags.env = envName
 		existingEnv = getExistingEnvironment(ctx, flags, azdClient)
 		if existingEnv == nil {
 			return nil, fmt.Errorf("azd environment not found, please create an environment (azd env new) and try again")
@@ -481,16 +726,18 @@ func ensureAzureContext(
 		return nil, nil, nil, fmt.Errorf("failed to ensure environment: %w", err)
 	}
 
-	envValues, err := azdClient.Environment().GetValues(ctx, &azdext.GetEnvironmentRequest{
-		Name: env.Name,
-	})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to get environment values: %w", err)
-	}
-
 	envValueMap := make(map[string]string)
-	for _, value := range envValues.KeyValues {
-		envValueMap[value.Key] = value.Value
+	if env != nil {
+		envValues, err := azdClient.Environment().GetValues(ctx, &azdext.GetEnvironmentRequest{
+			Name: env.Name,
+		})
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to get environment values: %w", err)
+		}
+
+		for _, value := range envValues.KeyValues {
+			envValueMap[value.Key] = value.Value
+		}
 	}
 
 	azureContext := &azdext.AzureContext{
@@ -502,62 +749,66 @@ func ensureAzureContext(
 		Resources: []string{},
 	}
 
-	if azureContext.Scope.SubscriptionId == "" {
-		fmt.Print()
-		fmt.Println("It looks like we first need to connect to your Azure subscription.")
+	// For the local-code path (no manifest pointer), defer subscription/region prompting
+	// until model selection, where the user is told why they need them.
+	if flags.manifestPointer != "" {
+		if azureContext.Scope.SubscriptionId == "" {
+			fmt.Print()
+			fmt.Println("It looks like we first need to connect to your Azure subscription.")
 
-		subscriptionResponse, err := azdClient.Prompt().PromptSubscription(ctx, &azdext.PromptSubscriptionRequest{})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to prompt for subscription: %w", err)
+			subscriptionResponse, err := azdClient.Prompt().PromptSubscription(ctx, &azdext.PromptSubscriptionRequest{})
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to prompt for subscription: %w", err)
+			}
+
+			azureContext.Scope.SubscriptionId = subscriptionResponse.Subscription.Id
+			azureContext.Scope.TenantId = subscriptionResponse.Subscription.TenantId
+
+			// Set the subscription ID in the environment
+			_, err = azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+				EnvName: env.Name,
+				Key:     "AZURE_TENANT_ID",
+				Value:   azureContext.Scope.TenantId,
+			})
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to set AZURE_TENANT_ID in environment: %w", err)
+			}
+
+			// Set the tenant ID in the environment
+			_, err = azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+				EnvName: env.Name,
+				Key:     "AZURE_SUBSCRIPTION_ID",
+				Value:   azureContext.Scope.SubscriptionId,
+			})
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to set AZURE_SUBSCRIPTION_ID in environment: %w", err)
+			}
 		}
 
-		azureContext.Scope.SubscriptionId = subscriptionResponse.Subscription.Id
-		azureContext.Scope.TenantId = subscriptionResponse.Subscription.TenantId
+		if azureContext.Scope.Location == "" {
+			fmt.Println()
+			fmt.Println(
+				"Next, we need to select a default Azure location that will be used as the target for your infrastructure.",
+			)
 
-		// Set the subscription ID in the environment
-		_, err = azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
-			EnvName: env.Name,
-			Key:     "AZURE_TENANT_ID",
-			Value:   azureContext.Scope.TenantId,
-		})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to set AZURE_TENANT_ID in environment: %w", err)
-		}
+			locationResponse, err := azdClient.Prompt().PromptLocation(ctx, &azdext.PromptLocationRequest{
+				AzureContext: azureContext,
+			})
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to prompt for location: %w", err)
+			}
 
-		// Set the tenant ID in the environment
-		_, err = azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
-			EnvName: env.Name,
-			Key:     "AZURE_SUBSCRIPTION_ID",
-			Value:   azureContext.Scope.SubscriptionId,
-		})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to set AZURE_SUBSCRIPTION_ID in environment: %w", err)
-		}
-	}
+			azureContext.Scope.Location = locationResponse.Location.Name
 
-	if azureContext.Scope.Location == "" {
-		fmt.Println()
-		fmt.Println(
-			"Next, we need to select a default Azure location that will be used as the target for your infrastructure.",
-		)
-
-		locationResponse, err := azdClient.Prompt().PromptLocation(ctx, &azdext.PromptLocationRequest{
-			AzureContext: azureContext,
-		})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to prompt for location: %w", err)
-		}
-
-		azureContext.Scope.Location = locationResponse.Location.Name
-
-		// Set the location in the environment
-		_, err = azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
-			EnvName: env.Name,
-			Key:     "AZURE_LOCATION",
-			Value:   azureContext.Scope.Location,
-		})
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to set AZURE_LOCATION in environment: %w", err)
+			// Set the location in the environment
+			_, err = azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+				EnvName: env.Name,
+				Key:     "AZURE_LOCATION",
+				Value:   azureContext.Scope.Location,
+			})
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to set AZURE_LOCATION in environment: %w", err)
+			}
 		}
 	}
 
@@ -905,14 +1156,428 @@ func (a *InitAction) isRegistryUrl(manifestPointer string) (bool, *RegistryManif
 	}
 }
 
+// sanitizeAgentName converts a string into a valid agent name:
+// lowercase, replace non-alphanumeric with hyphens, collapse consecutive hyphens,
+// strip leading/trailing hyphens, truncate to 63 chars.
+func sanitizeAgentName(name string) string {
+	name = strings.ToLower(name)
+	// Replace any character that isn't a-z, 0-9, or hyphen with a hyphen
+	re := regexp.MustCompile(`[^a-z0-9-]+`)
+	name = re.ReplaceAllString(name, "-")
+	// Collapse consecutive hyphens
+	re = regexp.MustCompile(`-{2,}`)
+	name = re.ReplaceAllString(name, "-")
+	// Strip leading/trailing hyphens
+	name = strings.Trim(name, "-")
+	// Truncate to 63 chars
+	if len(name) > 63 {
+		name = name[:63]
+		name = strings.TrimRight(name, "-")
+	}
+	if name == "" {
+		name = "my-agent"
+	}
+	return name
+}
+
+// normalizeForFuzzyMatch strips common separator characters (hyphens, dots, spaces, underscores)
+// and lowercases the string for fuzzy comparison.
+func normalizeForFuzzyMatch(s string) string {
+	s = strings.ToLower(s)
+	re := regexp.MustCompile(`[-.\s_]+`)
+	return re.ReplaceAllString(s, "")
+}
+
+// fuzzyFilterModels filters model names by a search term using normalized comparison.
+// The search term and model names both have separators stripped before matching.
+func fuzzyFilterModels(modelNames []string, searchTerm string) []string {
+	if searchTerm == "" {
+		return modelNames
+	}
+	normalizedSearch := normalizeForFuzzyMatch(searchTerm)
+	if normalizedSearch == "" {
+		return modelNames
+	}
+
+	// Build a regex pattern from the normalized search term
+	pattern, err := regexp.Compile("(?i)" + regexp.QuoteMeta(normalizedSearch))
+	if err != nil {
+		// Fallback to simple contains if regex fails
+		var matches []string
+		for _, name := range modelNames {
+			if strings.Contains(normalizeForFuzzyMatch(name), normalizedSearch) {
+				matches = append(matches, name)
+			}
+		}
+		return matches
+	}
+
+	var matches []string
+	for _, name := range modelNames {
+		if pattern.MatchString(normalizeForFuzzyMatch(name)) {
+			matches = append(matches, name)
+		}
+	}
+	return matches
+}
+
+// findDefaultModelIndex finds the index of gpt-4o in a sorted model list,
+// falling back to the first gpt-4 match, or 0.
+func findDefaultModelIndex(modelNames []string) int32 {
+	// Look for exact gpt-4o first
+	for i, name := range modelNames {
+		if name == "gpt-4o" {
+			return int32(i)
+		}
+	}
+	// Fall back to first gpt-4 match
+	for i, name := range modelNames {
+		if strings.HasPrefix(name, "gpt-4") {
+			return int32(i)
+		}
+	}
+	return 0
+}
+
+// FoundryProjectInfo holds information about a discovered Foundry project
+type FoundryProjectInfo struct {
+	SubscriptionId    string
+	ResourceGroupName string
+	AccountName       string
+	ProjectName       string
+	Location          string
+	ResourceId        string
+}
+
+// listFoundryProjects enumerates all Foundry projects in a subscription by listing
+// CognitiveServices accounts and their projects.
+func (a *InitAction) listFoundryProjects(ctx context.Context, subscriptionId string) ([]FoundryProjectInfo, error) {
+	accountsClient, err := armcognitiveservices.NewAccountsClient(subscriptionId, a.credential, azure.NewArmClientOptions())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create accounts client: %w", err)
+	}
+
+	projectsClient, err := armcognitiveservices.NewProjectsClient(subscriptionId, a.credential, azure.NewArmClientOptions())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create projects client: %w", err)
+	}
+
+	var results []FoundryProjectInfo
+
+	// List all CognitiveServices accounts
+	accountPager := accountsClient.NewListPager(nil)
+	for accountPager.More() {
+		page, err := accountPager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list accounts: %w", err)
+		}
+
+		for _, account := range page.Value {
+			if account.Kind == nil {
+				continue
+			}
+			// Only include Foundry-compatible account types
+			kind := strings.ToLower(*account.Kind)
+			if kind != "aiservices" && kind != "openai" {
+				continue
+			}
+
+			// Extract resource group from the account's ID
+			accountId := ""
+			if account.ID != nil {
+				accountId = *account.ID
+			}
+			rgName := extractResourceGroup(accountId)
+			if rgName == "" {
+				continue
+			}
+			accountName := ""
+			if account.Name != nil {
+				accountName = *account.Name
+			}
+			accountLocation := ""
+			if account.Location != nil {
+				accountLocation = *account.Location
+			}
+
+			// List projects under this account
+			projectPager := projectsClient.NewListPager(rgName, accountName, nil)
+			for projectPager.More() {
+				projectPage, err := projectPager.NextPage(ctx)
+				if err != nil {
+					// Skip accounts we can't list projects for (permissions, etc.)
+					break
+				}
+				for _, proj := range projectPage.Value {
+					projName := ""
+					if proj.Name != nil {
+						projName = *proj.Name
+					}
+					projLocation := accountLocation
+					if proj.Location != nil {
+						projLocation = *proj.Location
+					}
+					resourceId := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.CognitiveServices/accounts/%s/projects/%s",
+						subscriptionId, rgName, accountName, projName)
+
+					results = append(results, FoundryProjectInfo{
+						SubscriptionId:    subscriptionId,
+						ResourceGroupName: rgName,
+						AccountName:       accountName,
+						ProjectName:       projName,
+						Location:          projLocation,
+						ResourceId:        resourceId,
+					})
+				}
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// extractResourceGroup extracts the resource group name from an Azure resource ID.
+func extractResourceGroup(resourceId string) string {
+	parts := strings.Split(resourceId, "/")
+	for i, part := range parts {
+		if strings.EqualFold(part, "resourceGroups") && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+// FoundryDeploymentInfo holds information about an existing model deployment in a Foundry project.
+type FoundryDeploymentInfo struct {
+	Name        string
+	ModelName   string
+	ModelFormat string
+	Version     string
+	SkuName     string
+	SkuCapacity int
+}
+
+// listProjectDeployments lists all model deployments in a Foundry project (account).
+func (a *InitAction) listProjectDeployments(ctx context.Context, subscriptionId, resourceGroup, accountName string) ([]FoundryDeploymentInfo, error) {
+	deploymentsClient, err := armcognitiveservices.NewDeploymentsClient(subscriptionId, a.credential, azure.NewArmClientOptions())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create deployments client: %w", err)
+	}
+
+	pager := deploymentsClient.NewListPager(resourceGroup, accountName, nil)
+	var results []FoundryDeploymentInfo
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list deployments: %w", err)
+		}
+		for _, deployment := range page.Value {
+			info := FoundryDeploymentInfo{}
+			if deployment.Name != nil {
+				info.Name = *deployment.Name
+			}
+			if deployment.Properties != nil && deployment.Properties.Model != nil {
+				m := deployment.Properties.Model
+				if m.Name != nil {
+					info.ModelName = *m.Name
+				}
+				if m.Format != nil {
+					info.ModelFormat = *m.Format
+				}
+				if m.Version != nil {
+					info.Version = *m.Version
+				}
+			}
+			if deployment.SKU != nil {
+				if deployment.SKU.Name != nil {
+					info.SkuName = *deployment.SKU.Name
+				}
+				if deployment.SKU.Capacity != nil {
+					info.SkuCapacity = int(*deployment.SKU.Capacity)
+				}
+			}
+			results = append(results, info)
+		}
+	}
+	return results, nil
+}
+
+// promptForModelWithSearch prompts the user with a text search field, then shows a filtered Select list.
+// Returns the selected model name.
+func (a *InitAction) promptForModelWithSearch(ctx context.Context, modelNames []string) (string, error) {
+	for {
+		// Prompt user for a search term
+		searchResp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
+			Options: &azdext.PromptOptions{
+				Message: "Search for a model (e.g., gpt-4o) or press Enter to see all models:",
+			},
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to prompt for model search: %w", err)
+		}
+
+		filtered := fuzzyFilterModels(modelNames, searchResp.Value)
+		if len(filtered) == 0 {
+			fmt.Printf("No models matching '%s'. Please try again.\n", searchResp.Value)
+			continue
+		}
+
+		slices.Sort(filtered)
+
+		defaultIndex := findDefaultModelIndex(filtered)
+
+		choices := make([]*azdext.SelectChoice, len(filtered))
+		for i, name := range filtered {
+			choices[i] = &azdext.SelectChoice{
+				Label: name,
+				Value: name,
+			}
+		}
+
+		modelResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+			Options: &azdext.SelectOptions{
+				Message:       "Select a model:",
+				Choices:       choices,
+				SelectedIndex: &defaultIndex,
+			},
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to prompt for model selection: %w", err)
+		}
+
+		return filtered[*modelResp.Value], nil
+	}
+}
+
+// ensureSubscriptionAndLocation prompts for subscription and location if not already set,
+// with messaging that explains these are needed for model lookup and Foundry project resources.
+func (a *InitAction) ensureSubscriptionAndLocation(ctx context.Context) error {
+	if a.azureContext.Scope.SubscriptionId == "" {
+		fmt.Println("Select an Azure subscription to look up available models and provision your Foundry project resources.")
+
+		subscriptionResponse, err := a.azdClient.Prompt().PromptSubscription(ctx, &azdext.PromptSubscriptionRequest{})
+		if err != nil {
+			return fmt.Errorf("failed to prompt for subscription: %w", err)
+		}
+
+		a.azureContext.Scope.SubscriptionId = subscriptionResponse.Subscription.Id
+		a.azureContext.Scope.TenantId = subscriptionResponse.Subscription.TenantId
+
+		// Persist to environment
+		_, err = a.azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+			EnvName: a.environment.Name,
+			Key:     "AZURE_TENANT_ID",
+			Value:   a.azureContext.Scope.TenantId,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set AZURE_TENANT_ID in environment: %w", err)
+		}
+
+		_, err = a.azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+			EnvName: a.environment.Name,
+			Key:     "AZURE_SUBSCRIPTION_ID",
+			Value:   a.azureContext.Scope.SubscriptionId,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set AZURE_SUBSCRIPTION_ID in environment: %w", err)
+		}
+
+		// Refresh credential with the tenant
+		credential, err := azidentity.NewAzureDeveloperCLICredential(&azidentity.AzureDeveloperCLICredentialOptions{
+			TenantID:                   a.azureContext.Scope.TenantId,
+			AdditionallyAllowedTenants: []string{"*"},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create azure credential: %w", err)
+		}
+		a.credential = credential
+	}
+
+	if a.azureContext.Scope.Location == "" {
+		fmt.Println("Select an Azure location. This determines which models are available and where your Foundry project resources will be deployed.")
+
+		locationResponse, err := a.azdClient.Prompt().PromptLocation(ctx, &azdext.PromptLocationRequest{
+			AzureContext: a.azureContext,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to prompt for location: %w", err)
+		}
+
+		a.azureContext.Scope.Location = locationResponse.Location.Name
+
+		_, err = a.azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+			EnvName: a.environment.Name,
+			Key:     "AZURE_LOCATION",
+			Value:   a.azureContext.Scope.Location,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set AZURE_LOCATION in environment: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ensureSubscription prompts for subscription only if not already set.
+func (a *InitAction) ensureSubscription(ctx context.Context) error {
+	if a.azureContext.Scope.SubscriptionId == "" {
+		fmt.Println("Select an Azure subscription to look up available models and provision your Foundry project resources.")
+
+		subscriptionResponse, err := a.azdClient.Prompt().PromptSubscription(ctx, &azdext.PromptSubscriptionRequest{})
+		if err != nil {
+			return fmt.Errorf("failed to prompt for subscription: %w", err)
+		}
+
+		a.azureContext.Scope.SubscriptionId = subscriptionResponse.Subscription.Id
+		a.azureContext.Scope.TenantId = subscriptionResponse.Subscription.TenantId
+
+		// Persist to environment
+		_, err = a.azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+			EnvName: a.environment.Name,
+			Key:     "AZURE_TENANT_ID",
+			Value:   a.azureContext.Scope.TenantId,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set AZURE_TENANT_ID in environment: %w", err)
+		}
+
+		_, err = a.azdClient.Environment().SetValue(ctx, &azdext.SetEnvRequest{
+			EnvName: a.environment.Name,
+			Key:     "AZURE_SUBSCRIPTION_ID",
+			Value:   a.azureContext.Scope.SubscriptionId,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to set AZURE_SUBSCRIPTION_ID in environment: %w", err)
+		}
+
+		// Refresh credential with the tenant
+		credential, err := azidentity.NewAzureDeveloperCLICredential(&azidentity.AzureDeveloperCLICredentialOptions{
+			TenantID:                   a.azureContext.Scope.TenantId,
+			AdditionallyAllowedTenants: []string{"*"},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create azure credential: %w", err)
+		}
+		a.credential = credential
+	}
+
+	return nil
+}
+
 // createManifestFromLocalAgent creates an AgentManifest for local agent code
 // This is used when no manifest pointer is provided and we need to scaffold a new agent
 func (a *InitAction) createManifestFromLocalAgent(ctx context.Context) (*agent_yaml.AgentManifest, error) {
+	// Default agent name to sanitized cwd
+	defaultName := "my-agent"
+	if cwd, err := os.Getwd(); err == nil {
+		defaultName = sanitizeAgentName(filepath.Base(cwd))
+	}
+
 	// Prompt user for agent name
 	promptResp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
 		Options: &azdext.PromptOptions{
 			Message:      "Enter a name for your agent:",
-			DefaultValue: "my-agent",
+			DefaultValue: defaultName,
 		},
 	})
 	if err != nil {
@@ -920,41 +1585,207 @@ func (a *InitAction) createManifestFromLocalAgent(ctx context.Context) (*agent_y
 	}
 	agentName := promptResp.Value
 
+	// Create the azd environment now that we have the agent name
+	if a.environment == nil {
+		if err := a.createEnvironment(ctx, agentName+"-dev"); err != nil {
+			return nil, fmt.Errorf("failed to create azd environment: %w", err)
+		}
+	}
+
 	// TODO: Prompt user for agent kind
 	agentKind := agent_yaml.AgentKindHosted
 
-	// Prompt user to select a model from the catalog
-	modelCatalog, err := a.modelCatalogService.ListAllModels(ctx, a.azureContext.Scope.SubscriptionId, a.azureContext.Scope.Location)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list models from catalog: %w", err)
+	// Ask user how they want to configure a model
+	modelConfigChoices := []*azdext.SelectChoice{
+		{Label: "Deploy a new model from the catalog", Value: "new"},
+		{Label: "Select an existing model deployment from a Foundry project", Value: "existing"},
+		{Label: "Skip model configuration", Value: "skip"},
 	}
 
-	// Build model choices from the catalog
-	var modelChoices []*azdext.SelectChoice
-	var modelNames []string
-	for modelName := range modelCatalog {
-		modelNames = append(modelNames, modelName)
-	}
-	slices.Sort(modelNames)
-	for _, modelName := range modelNames {
-		modelChoices = append(modelChoices, &azdext.SelectChoice{
-			Label: modelName,
-			Value: modelName,
-		})
-	}
-
-	modelResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+	modelConfigResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
 		Options: &azdext.SelectOptions{
-			Message: "Select a model for your agent:",
-			Choices: modelChoices,
+			Message: "How would you like to configure a model for your agent?",
+			Choices: modelConfigChoices,
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to prompt for model selection: %w", err)
+		return nil, fmt.Errorf("failed to prompt for model configuration choice: %w", err)
 	}
-	selectedModel := modelNames[*modelResp.Value]
+	modelConfigChoice := modelConfigChoices[*modelConfigResp.Value].Value
 
-	// Create a minimal AgentManifest with the Template as a ContainerAgent
+	var selectedModel string
+	var existingDeployment *FoundryDeploymentInfo
+
+	switch modelConfigChoice {
+	case "new":
+		// Path A: Deploy a new model from the catalog
+		// Need subscription + location for model catalog
+		if err := a.ensureSubscriptionAndLocation(ctx); err != nil {
+			return nil, err
+		}
+
+		modelCatalog, err := a.modelCatalogService.ListAllModels(ctx, a.azureContext.Scope.SubscriptionId, a.azureContext.Scope.Location)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list models from catalog: %w", err)
+		}
+
+		var modelNames []string
+		for modelName := range modelCatalog {
+			modelNames = append(modelNames, modelName)
+		}
+
+		selected, err := a.promptForModelWithSearch(ctx, modelNames)
+		if err != nil {
+			return nil, err
+		}
+		selectedModel = selected
+
+	case "existing":
+		// Path B: Select an existing model deployment from a Foundry project
+		// Need subscription to enumerate projects
+		if err := a.ensureSubscription(ctx); err != nil {
+			return nil, err
+		}
+
+		spinner := ux.NewSpinner(&ux.SpinnerOptions{
+			Text:        "Searching for Foundry projects in your subscription...",
+			ClearOnStop: true,
+		})
+		if err := spinner.Start(ctx); err != nil {
+			return nil, fmt.Errorf("failed to start spinner: %w", err)
+		}
+
+		projects, err := a.listFoundryProjects(ctx, a.azureContext.Scope.SubscriptionId)
+		if stopErr := spinner.Stop(ctx); stopErr != nil {
+			return nil, stopErr
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to list Foundry projects: %w", err)
+		}
+
+		if len(projects) == 0 {
+			fmt.Println("No Foundry projects found in your subscription. Falling back to deploying a new model.")
+			// Fall back to new model flow
+			if err := a.ensureSubscriptionAndLocation(ctx); err != nil {
+				return nil, err
+			}
+			modelCatalog, err := a.modelCatalogService.ListAllModels(ctx, a.azureContext.Scope.SubscriptionId, a.azureContext.Scope.Location)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list models from catalog: %w", err)
+			}
+			var modelNames []string
+			for modelName := range modelCatalog {
+				modelNames = append(modelNames, modelName)
+			}
+			selected, err := a.promptForModelWithSearch(ctx, modelNames)
+			if err != nil {
+				return nil, err
+			}
+			selectedModel = selected
+		} else {
+			// Let user pick a Foundry project
+			projectChoices := make([]*azdext.SelectChoice, len(projects))
+			for i, p := range projects {
+				projectChoices[i] = &azdext.SelectChoice{
+					Label: fmt.Sprintf("%s / %s (%s)", p.AccountName, p.ProjectName, p.Location),
+					Value: fmt.Sprintf("%d", i),
+				}
+			}
+
+			projectResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+				Options: &azdext.SelectOptions{
+					Message: "Select a Foundry project:",
+					Choices: projectChoices,
+				},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to prompt for project selection: %w", err)
+			}
+
+			selectedProject := projects[*projectResp.Value]
+
+			// Set the Foundry project context
+			a.azureContext.Scope.Location = selectedProject.Location
+			if err := a.setEnvVar(ctx, "AZURE_AI_PROJECT_ID", selectedProject.ResourceId); err != nil {
+				return nil, err
+			}
+			if err := a.setEnvVar(ctx, "AZURE_RESOURCE_GROUP", selectedProject.ResourceGroupName); err != nil {
+				return nil, err
+			}
+			if err := a.setEnvVar(ctx, "AZURE_AI_ACCOUNT_NAME", selectedProject.AccountName); err != nil {
+				return nil, err
+			}
+			if err := a.setEnvVar(ctx, "AZURE_AI_PROJECT_NAME", selectedProject.ProjectName); err != nil {
+				return nil, err
+			}
+			if err := a.setEnvVar(ctx, "AZURE_LOCATION", selectedProject.Location); err != nil {
+				return nil, err
+			}
+
+			// List deployments in selected project
+			deployments, err := a.listProjectDeployments(ctx, selectedProject.SubscriptionId, selectedProject.ResourceGroupName, selectedProject.AccountName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list deployments: %w", err)
+			}
+
+			if len(deployments) == 0 {
+				fmt.Println("No existing deployments found. You can create a new model deployment.")
+			}
+
+			// Build choices: existing deployments + "Create a new model deployment"
+			deployChoices := make([]*azdext.SelectChoice, 0, len(deployments)+1)
+			for _, d := range deployments {
+				label := fmt.Sprintf("%s (%s v%s, %s)", d.Name, d.ModelName, d.Version, d.SkuName)
+				deployChoices = append(deployChoices, &azdext.SelectChoice{
+					Label: label,
+					Value: d.Name,
+				})
+			}
+			deployChoices = append(deployChoices, &azdext.SelectChoice{
+				Label: "Create a new model deployment",
+				Value: "__create_new__",
+			})
+
+			deployResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+				Options: &azdext.SelectOptions{
+					Message: "Select a model deployment:",
+					Choices: deployChoices,
+				},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to prompt for deployment selection: %w", err)
+			}
+
+			selectedIdx := *deployResp.Value
+			if selectedIdx < int32(len(deployments)) {
+				// User selected an existing deployment
+				d := deployments[selectedIdx]
+				existingDeployment = &d
+				selectedModel = d.ModelName
+				fmt.Printf("Model deployment name: %s\n", d.Name)
+			} else {
+				// User wants to create a new deployment — region locked to the project's location
+				modelCatalog, err := a.modelCatalogService.ListAllModels(ctx, selectedProject.SubscriptionId, selectedProject.Location)
+				if err != nil {
+					return nil, fmt.Errorf("failed to list models from catalog: %w", err)
+				}
+				var modelNames []string
+				for modelName := range modelCatalog {
+					modelNames = append(modelNames, modelName)
+				}
+				selected, err := a.promptForModelWithSearch(ctx, modelNames)
+				if err != nil {
+					return nil, err
+				}
+				selectedModel = selected
+			}
+		}
+
+	case "skip":
+		// Path C: Skip model configuration entirely
+	}
+
+	// Create a minimal AgentManifest
 	manifest := &agent_yaml.AgentManifest{
 		Name: agentName,
 		Template: agent_yaml.ContainerAgent{
@@ -969,7 +1800,11 @@ func (a *InitAction) createManifestFromLocalAgent(ctx context.Context) (*agent_y
 				},
 			},
 		},
-		Resources: []any{
+	}
+
+	// Add model resource if a model was selected
+	if selectedModel != "" && existingDeployment == nil {
+		manifest.Resources = []any{
 			agent_yaml.ModelResource{
 				Resource: agent_yaml.Resource{
 					Name: selectedModel,
@@ -977,7 +1812,30 @@ func (a *InitAction) createManifestFromLocalAgent(ctx context.Context) (*agent_y
 				},
 				Id: selectedModel,
 			},
-		},
+		}
+	} else if existingDeployment != nil {
+		// For existing deployments, store the deployment details directly
+		a.deploymentDetails = append(a.deploymentDetails, project.Deployment{
+			Name: existingDeployment.Name,
+			Model: project.DeploymentModel{
+				Name:    existingDeployment.ModelName,
+				Format:  existingDeployment.ModelFormat,
+				Version: existingDeployment.Version,
+			},
+			Sku: project.DeploymentSku{
+				Name:     existingDeployment.SkuName,
+				Capacity: existingDeployment.SkuCapacity,
+			},
+		})
+		manifest.Resources = []any{
+			agent_yaml.ModelResource{
+				Resource: agent_yaml.Resource{
+					Name: existingDeployment.Name,
+					Kind: agent_yaml.ResourceKindModel,
+				},
+				Id: existingDeployment.ModelName,
+			},
+		}
 	}
 
 	return manifest, nil
@@ -1024,7 +1882,6 @@ func (a *InitAction) downloadAgentYaml(
 	// Check if manifestPointer is a local file path or a URI
 	if a.isLocalFilePath(manifestPointer) {
 		// Handle local file path
-		fmt.Printf("Reading agent.yaml from local file: %s\n", manifestPointer)
 		content, err = os.ReadFile(manifestPointer)
 		if err != nil {
 			return nil, "", fmt.Errorf("reading local file %s: %w", manifestPointer, err)
@@ -1227,8 +2084,6 @@ func (a *InitAction) downloadAgentYaml(
 		return nil, "", err
 	}
 
-	fmt.Println("✓ YAML content successfully validated against AgentManifest format")
-
 	agentId := agentManifest.Name
 
 	// Use targetDir if provided, otherwise default to "src/{agentId}"
@@ -1250,12 +2105,17 @@ func (a *InitAction) downloadAgentYaml(
 		return nil, "", fmt.Errorf("failed to process manifest parameters: %w", err)
 	}
 
-	agentManifest, deploymentDetails, err := a.ProcessModels(ctx, agentManifest)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to process model resources: %w", err)
-	}
+	// Skip model processing if deployment details were already resolved
+	// (e.g. user selected an existing deployment in the local-code flow)
+	if len(a.deploymentDetails) == 0 {
+		var deploymentDetails []project.Deployment
+		agentManifest, deploymentDetails, err = a.ProcessModels(ctx, agentManifest)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to process model resources: %w", err)
+		}
 
-	a.deploymentDetails = deploymentDetails
+		a.deploymentDetails = deploymentDetails
+	}
 
 	_, isPromptAgent := agentManifest.Template.(agent_yaml.PromptAgent)
 	if isPromptAgent {
@@ -1325,8 +2185,6 @@ func (a *InitAction) downloadAgentYaml(
 	if err := os.WriteFile(filePath, agentFileContents.Bytes(), osutil.PermissionFile); err != nil {
 		return nil, "", fmt.Errorf("saving file to %s: %w", filePath, err)
 	}
-
-	fmt.Printf("Processed agent.yaml at %s\n", filePath)
 
 	return agentManifest, targetDir, nil
 }
@@ -1437,90 +2295,19 @@ func (a *InitAction) addToProject(ctx context.Context, targetDir string, agentMa
 		return fmt.Errorf("adding agent service to project: %w", err)
 	}
 
-	fmt.Printf("\nAdded your agent as a service entry named '%s' under the file azure.yaml.\n", agentDef.Name)
-	fmt.Printf("To provision and deploy the whole solution, use %s.\n", color.HiBlueString("azd up"))
-	fmt.Printf(
-		"If you already have your project provisioned with hosted agents requirements, "+
-			"you can directly use %s.\n",
-		color.HiBlueString("azd deploy %s", agentDef.Name))
+	fmt.Printf("\nRegistered %s as a deployable service in %s.\n", color.CyanString(agentDef.Name), color.CyanString("azure.yaml"))
 	return nil
 }
 
 func (a *InitAction) populateContainerSettings(ctx context.Context) (*project.ContainerSettings, error) {
-	// Default values
-	defaultMemory := project.DefaultMemory
-	defaultCpu := project.DefaultCpu
-	defaultMinReplicas := fmt.Sprintf("%d", project.DefaultMinReplicas)
-	defaultMaxReplicas := fmt.Sprintf("%d", project.DefaultMaxReplicas)
-
-	// Prompt for memory allocation
-	memoryResp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-		Options: &azdext.PromptOptions{
-			Message:      "Enter desired container memory allocation (e.g., '1Gi', '512Mi')",
-			DefaultValue: defaultMemory,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("prompting for memory allocation: %w", err)
-	}
-
-	// Prompt for CPU allocation
-	cpuResp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-		Options: &azdext.PromptOptions{
-			Message:      "Enter desired container CPU allocation (e.g., '1', '500m')",
-			DefaultValue: defaultCpu,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("prompting for CPU allocation: %w", err)
-	}
-
-	// Prompt for minimum replicas
-	minReplicasResp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-		Options: &azdext.PromptOptions{
-			Message:      "Enter desired container minimum number of replicas",
-			DefaultValue: defaultMinReplicas,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("prompting for minimum replicas: %w", err)
-	}
-
-	// Prompt for maximum replicas
-	maxReplicasResp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-		Options: &azdext.PromptOptions{
-			Message:      "Enter desired container maximum number of replicas",
-			DefaultValue: defaultMaxReplicas,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("prompting for maximum replicas: %w", err)
-	}
-
-	// Convert string values to appropriate types
-	minReplicas, err := strconv.Atoi(minReplicasResp.Value)
-	if err != nil {
-		return nil, fmt.Errorf("invalid minimum replicas value: %w", err)
-	}
-
-	maxReplicas, err := strconv.Atoi(maxReplicasResp.Value)
-	if err != nil {
-		return nil, fmt.Errorf("invalid maximum replicas value: %w", err)
-	}
-
-	// Validate that max replicas >= min replicas
-	if maxReplicas < minReplicas {
-		return nil, fmt.Errorf("maximum replicas (%d) must be greater than or equal to minimum replicas (%d)", maxReplicas, minReplicas)
-	}
-
 	return &project.ContainerSettings{
 		Resources: &project.ResourceSettings{
-			Memory: memoryResp.Value,
-			Cpu:    cpuResp.Value,
+			Memory: project.DefaultMemory,
+			Cpu:    project.DefaultCpu,
 		},
 		Scale: &project.ScaleSettings{
-			MinReplicas: minReplicas,
-			MaxReplicas: maxReplicas,
+			MinReplicas: project.DefaultMinReplicas,
+			MaxReplicas: project.DefaultMaxReplicas,
 		},
 	}, nil
 }
@@ -2246,20 +3033,9 @@ func (a *InitAction) getModelDeploymentDetails(ctx context.Context, model agent_
 		return nil, fmt.Errorf("failed to get model details: %w", err)
 	}
 
-	message := fmt.Sprintf("Enter model deployment name for model '%s' (defaults to model name)", modelDetails.Name)
-
-	modelDeploymentInput, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-		Options: &azdext.PromptOptions{
-			Message:        message,
-			IgnoreHintKeys: true,
-			DefaultValue:   modelDetails.Name,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to prompt for text value: %w", err)
-	}
-
-	modelDeployment := modelDeploymentInput.Value
+	// Auto-assign deployment name to model name
+	modelDeployment := modelDetails.Name
+	fmt.Printf("Model deployment name: %s\n", modelDeployment)
 
 	return &project.Deployment{
 		Name: modelDeployment,
@@ -2320,9 +3096,17 @@ func (a *InitAction) getModelDetails(ctx context.Context, modelName string) (*ai
 		return nil, fmt.Errorf("listing versions for model '%s': %w", modelName, err)
 	}
 
-	modelVersion, err := a.selectFromList(ctx, "model version", availableVersions, defaultVersion)
-	if err != nil {
-		return nil, err
+	// Auto-select the default (latest) version; only prompt if no default is available
+	var modelVersion string
+	if defaultVersion != "" {
+		modelVersion = defaultVersion
+	} else if len(availableVersions) > 0 {
+		modelVersion = availableVersions[len(availableVersions)-1]
+	} else {
+		modelVersion, err = a.selectFromList(ctx, "model version", availableVersions, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	availableSkus, err := a.modelCatalogService.ListModelSkus(ctx, model, currentLocation, modelVersion)
@@ -2330,18 +3114,19 @@ func (a *InitAction) getModelDetails(ctx context.Context, modelName string) (*ai
 		return nil, fmt.Errorf("listing SKUs for model '%s': %w", modelName, err)
 	}
 
-	// Determine default SKU based on priority list
-	defaultSku := ""
+	// Auto-select SKU based on priority list; only prompt if no priority match
+	skuSelection := ""
 	for _, sku := range defaultSkuPriority {
 		if slices.Contains(availableSkus, sku) {
-			defaultSku = sku
+			skuSelection = sku
 			break
 		}
 	}
-
-	skuSelection, err := a.selectFromList(ctx, "model SKU", availableSkus, defaultSku)
-	if err != nil {
-		return nil, err
+	if skuSelection == "" {
+		skuSelection, err = a.selectFromList(ctx, "model SKU", availableSkus, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	deploymentOptions := ai.AiModelDeploymentOptions{
@@ -2664,8 +3449,6 @@ func (a *InitAction) ProcessModels(ctx context.Context, manifest *agent_yaml.Age
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to inject deployment names into manifest: %w", err)
 	}
-
-	fmt.Println("Model deployment details processed and injected into agent definition. Deployment details can also be found in the JSON formatted AI_PROJECT_DEPLOYMENTS environment variable.")
 
 	return updatedManifest, deploymentDetails, nil
 }
