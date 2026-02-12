@@ -21,10 +21,18 @@ const (
 
 // ServiceTargetAgentConfig provides custom configuration for the Azure AI Service target
 type ServiceTargetAgentConfig struct {
-	Environment map[string]string  `json:"env,omitempty"`
-	Container   *ContainerSettings `json:"container,omitempty"`
-	Deployments []Deployment       `json:"deployments,omitempty"`
-	Resources   []Resource         `json:"resources,omitempty"`
+	Environment map[string]string    `json:"env,omitempty"`
+	Container   *ContainerSettings   `json:"container,omitempty"`
+	Deployments []Deployment         `json:"deployments,omitempty"`
+	Resources   []Resource           `json:"resources,omitempty"`
+	Application *ApplicationSettings `json:"application,omitempty"`
+}
+
+// ApplicationSettings provides Cognitive Services Application configuration
+type ApplicationSettings struct {
+	Enabled    bool   `json:"enabled,omitempty"`
+	Name       string `json:"name,omitempty"`
+	BotService bool   `json:"botService,omitempty"`
 }
 
 // ContainerSettings provides container configuration for the Azure AI Service target

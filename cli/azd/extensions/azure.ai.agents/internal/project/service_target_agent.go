@@ -481,6 +481,8 @@ func (p *AgentServiceTargetProvider) deployPromptAgent(
 		agentVersionResponse.Version,
 		azdEnv["AZURE_AI_PROJECT_ID"],
 		azdEnv["AZURE_AI_PROJECT_ENDPOINT"],
+		azdEnv["APPLICATION_NAME"],
+		strings.EqualFold(azdEnv["ENABLE_APPLICATION"], "true"),
 	)
 
 	return &azdext.ServiceDeployResult{
@@ -589,6 +591,8 @@ func (p *AgentServiceTargetProvider) deployHostedAgent(
 		agentVersionResponse.Version,
 		azdEnv["AZURE_AI_PROJECT_ID"],
 		azdEnv["AZURE_AI_PROJECT_ENDPOINT"],
+		azdEnv["APPLICATION_NAME"],
+		strings.EqualFold(azdEnv["ENABLE_APPLICATION"], "true"),
 	)
 
 	return &azdext.ServiceDeployResult{
@@ -602,6 +606,8 @@ func (p *AgentServiceTargetProvider) deployArtifacts(
 	agentVersion string,
 	projectResourceID string,
 	projectEndpoint string,
+	applicationName string,
+	enableApplication bool,
 ) []*azdext.Artifact {
 	artifacts := []*azdext.Artifact{}
 
@@ -637,6 +643,32 @@ func (p *AgentServiceTargetProvider) deployArtifacts(
 				"note":         "For information on invoking the agent, see " + output.WithLinkFormat("https://aka.ms/azd-agents-invoke"),
 			},
 		})
+
+		// Add Application endpoints when Application is enabled
+		if enableApplication && applicationName != "" {
+			apiVersion := "2025-11-15-preview"
+			appBase := fmt.Sprintf("%s/applications/%s", projectEndpoint, applicationName)
+
+			artifacts = append(artifacts, &azdext.Artifact{
+				Kind:         azdext.ArtifactKind_ARTIFACT_KIND_ENDPOINT,
+				Location:     fmt.Sprintf("%s/protocols/openai/responses?api-version=%s", appBase, apiVersion),
+				LocationKind: azdext.LocationKind_LOCATION_KIND_REMOTE,
+				Metadata: map[string]string{
+					"label":     "Application endpoint (Responses)",
+					"clickable": "false",
+				},
+			})
+
+			artifacts = append(artifacts, &azdext.Artifact{
+				Kind:         azdext.ArtifactKind_ARTIFACT_KIND_ENDPOINT,
+				Location:     fmt.Sprintf("%s/protocols/activityprotocol?api-version=%s", appBase, apiVersion),
+				LocationKind: azdext.LocationKind_LOCATION_KIND_REMOTE,
+				Metadata: map[string]string{
+					"label":     "Application endpoint (Activity Protocol)",
+					"clickable": "false",
+				},
+			})
+		}
 	}
 
 	return artifacts

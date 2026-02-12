@@ -12,8 +12,11 @@ import (
 	"strings"
 
 	"azureaiagent/internal/pkg/agents/agent_yaml"
+	"azureaiagent/internal/pkg/azure"
 	"azureaiagent/internal/project"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/braydonk/yaml"
 	"github.com/spf13/cobra"
@@ -50,7 +53,14 @@ func newListenCommand() *cobra.Command {
 				WithProjectEventHandler("predeploy", func(ctx context.Context, args *azdext.ProjectEventArgs) error {
 					return predeployHandler(ctx, azdClient, projectParser, args)
 				}).
-				WithProjectEventHandler("postdeploy", projectParser.CoboPostDeploy)
+				WithProjectEventHandler("postdeploy", func(ctx context.Context, args *azdext.ProjectEventArgs) error {
+					// Run existing Container App agent post-deploy handler
+					if err := projectParser.CoboPostDeploy(ctx, args); err != nil {
+						return err
+					}
+					// Run Application/A365 post-deploy handler for azure.ai.agent services
+					return applicationPostDeployHandler(ctx, azdClient, args)
+				})
 
 			// Start listening for events
 			// This is a blocking call and will not return until the server connection is closed.
@@ -136,6 +146,12 @@ func envUpdate(ctx context.Context, azdClient *azdext.AzdClient, azdProject *azd
 		}
 	}
 
+	if foundryAgentConfig.Application != nil && foundryAgentConfig.Application.Enabled {
+		if err := applicationEnvUpdate(ctx, foundryAgentConfig.Application, azdClient, currentEnvResponse.Environment.Name); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -171,6 +187,17 @@ func kindEnvUpdate(ctx context.Context, azdClient *azdext.AzdClient, project *az
 		}
 	}
 
+	// Extract agent name from agent.yaml and set as AGENT_NAME for Bicep params
+	if name, ok := genericTemplate["name"].(string); ok && name != "" {
+		if err := setEnvVar(ctx, azdClient, envName, "AGENT_NAME", name); err != nil {
+			return err
+		}
+		// Also default APPLICATION_NAME to the agent name if not already set
+		if err := setEnvVarIfEmpty(ctx, azdClient, envName, "APPLICATION_NAME", name); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -200,6 +227,26 @@ func resourcesEnvUpdate(ctx context.Context, resources []project.Resource, azdCl
 	escapedJsonString = strings.ReplaceAll(escapedJsonString, "\"", "\\\"")
 
 	return setEnvVar(ctx, azdClient, envName, "AI_PROJECT_DEPENDENT_RESOURCES", escapedJsonString)
+}
+
+func applicationEnvUpdate(ctx context.Context, appConfig *project.ApplicationSettings, azdClient *azdext.AzdClient, envName string) error {
+	if err := setEnvVar(ctx, azdClient, envName, "ENABLE_APPLICATION", "true"); err != nil {
+		return err
+	}
+
+	if appConfig.Name != "" {
+		if err := setEnvVar(ctx, azdClient, envName, "APPLICATION_NAME", appConfig.Name); err != nil {
+			return err
+		}
+	}
+
+	if appConfig.BotService {
+		if err := setEnvVar(ctx, azdClient, envName, "ENABLE_BOT_SERVICE", "true"); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func containerAgentHandling(ctx context.Context, azdClient *azdext.AzdClient, project *azdext.ProjectConfig, svc *azdext.ServiceConfig) error {
@@ -242,6 +289,17 @@ func setEnvVar(ctx context.Context, azdClient *azdext.AzdClient, envName string,
 
 	fmt.Printf("Set environment variable: %s=%s\n", key, value)
 	return nil
+}
+
+func setEnvVarIfEmpty(ctx context.Context, azdClient *azdext.AzdClient, envName string, key string, value string) error {
+	resp, err := azdClient.Environment().GetValue(ctx, &azdext.GetEnvRequest{
+		EnvName: envName,
+		Key:     key,
+	})
+	if err == nil && resp.Value != "" {
+		return nil
+	}
+	return setEnvVar(ctx, azdClient, envName, key, value)
 }
 
 func populateContainerSettings(ctx context.Context, azdClient *azdext.AzdClient, svc *azdext.ServiceConfig) error {
@@ -313,6 +371,143 @@ func populateContainerSettings(ctx context.Context, azdClient *azdext.AzdClient,
 
 	if _, err := azdClient.Project().AddService(ctx, req); err != nil {
 		return fmt.Errorf("adding agent service to project: %w", err)
+	}
+
+	return nil
+}
+
+// applicationPostDeployHandler handles post-deploy for azure.ai.agent services that have
+// Application resources enabled. It creates agent deployments and optionally publishes
+// as a digital worker when Bot Service is also enabled.
+func applicationPostDeployHandler(ctx context.Context, azdClient *azdext.AzdClient, args *azdext.ProjectEventArgs) error {
+	azdEnvClient := azdClient.Environment()
+	cEnvResponse, err := azdEnvClient.GetCurrent(ctx, &azdext.EmptyRequest{})
+	if err != nil {
+		return fmt.Errorf("failed to get current environment: %w", err)
+	}
+
+	envResponse, err := azdEnvClient.GetValues(ctx, &azdext.GetEnvironmentRequest{
+		Name: cEnvResponse.Environment.Name,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get environment values: %w", err)
+	}
+
+	azdEnv := make(map[string]string, len(envResponse.KeyValues))
+	for _, kv := range envResponse.KeyValues {
+		azdEnv[kv.Key] = kv.Value
+	}
+
+	// Tier 1 guard: Only run when APPLICATION_NAME is set (Application was provisioned)
+	applicationName := azdEnv["APPLICATION_NAME"]
+	if applicationName == "" {
+		return nil
+	}
+
+	projectID := azdEnv["AZURE_AI_PROJECT_ID"]
+	if projectID == "" {
+		return nil
+	}
+
+	// Parse project resource ID to extract components
+	parsedResource, err := arm.ParseResourceID(projectID)
+	if err != nil {
+		return fmt.Errorf("failed to parse AZURE_AI_PROJECT_ID: %w", err)
+	}
+
+	subscriptionID := parsedResource.SubscriptionID
+	resourceGroup := parsedResource.ResourceGroupName
+	projectName := parsedResource.Name
+	accountName := ""
+	if parsedResource.Parent != nil {
+		accountName = parsedResource.Parent.Name
+	}
+	if accountName == "" {
+		return fmt.Errorf("could not extract account name from AZURE_AI_PROJECT_ID")
+	}
+
+	// Find agent name and version from deployed services
+	var agentName, agentVersion string
+	for _, svc := range args.Project.Services {
+		if svc.Host == AiAgentHost {
+			serviceKey := strings.ReplaceAll(svc.Name, " ", "_")
+			serviceKey = strings.ReplaceAll(serviceKey, "-", "_")
+			serviceKey = strings.ToUpper(serviceKey)
+
+			agentName = azdEnv[fmt.Sprintf("AGENT_%s_NAME", serviceKey)]
+			agentVersion = azdEnv[fmt.Sprintf("AGENT_%s_VERSION", serviceKey)]
+			if agentName != "" && agentVersion != "" {
+				break
+			}
+		}
+	}
+
+	if agentName == "" || agentVersion == "" {
+		fmt.Println("No agent name/version found — skipping application deployment")
+		return nil
+	}
+
+	// Get the tenant ID for credential
+	tenantResponse, err := azdClient.Account().LookupTenant(ctx, &azdext.LookupTenantRequest{
+		SubscriptionId: subscriptionID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get tenant ID: %w", err)
+	}
+
+	cred, err := azidentity.NewAzureDeveloperCLICredential(&azidentity.AzureDeveloperCLICredentialOptions{
+		TenantID:                   tenantResponse.TenantId,
+		AdditionallyAllowedTenants: []string{"*"},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create Azure credential: %w", err)
+	}
+
+	// Tier 1: Create agent deployment on the Application
+	fmt.Printf("Creating agent deployment on application '%s' (agent: %s, version: %s)...\n", applicationName, agentName, agentVersion)
+	appClient := azure.NewApplicationClient(cred)
+	if err := appClient.CreateAgentDeployment(ctx, subscriptionID, resourceGroup, accountName, projectName, applicationName, agentName, agentVersion); err != nil {
+		return fmt.Errorf("failed to create agent deployment: %w", err)
+	}
+	fmt.Println("✓ Agent deployment created successfully")
+
+	// Tier 2 guard: Only run A365 flow when Bot Service is enabled
+	enableBotService := azdEnv["ENABLE_BOT_SERVICE"]
+	blueprintID := azdEnv["AGENT_IDENTITY_BLUEPRINT_ID"]
+	if enableBotService != "true" || blueprintID == "" {
+		return nil
+	}
+
+	fmt.Println("Bot Service enabled — running A365 digital worker flow...")
+
+	// Create OAuth2 permission grants for blueprint SP
+	fmt.Println("Creating OAuth2 permission grants for blueprint service principal...")
+	grantsClient, err := azure.NewOAuth2GrantsClient(cred)
+	if err != nil {
+		return fmt.Errorf("failed to create OAuth2 grants client: %w", err)
+	}
+
+	if err := grantsClient.CreateBlueprintOAuth2Grants(ctx, blueprintID); err != nil {
+		fmt.Printf("Warning: OAuth2 grants creation failed: %v\n", err)
+	} else {
+		fmt.Println("✓ OAuth2 permission grants created")
+	}
+
+	// Publish digital worker to M365
+	location := azdEnv["AZURE_LOCATION"]
+	if location == "" {
+		location = azdEnv["LOCATION"]
+	}
+	if location == "" {
+		fmt.Println("Warning: AZURE_LOCATION not set — skipping M365 digital worker publish")
+		return nil
+	}
+
+	fmt.Println("Publishing digital worker to Microsoft 365...")
+	if err := appClient.PublishDigitalWorker(ctx, location, subscriptionID, resourceGroup, accountName, projectName, applicationName, blueprintID); err != nil {
+		fmt.Printf("Warning: Digital worker publish failed: %v\n", err)
+	} else {
+		fmt.Println("✓ Digital worker published to Microsoft 365")
 	}
 
 	return nil
