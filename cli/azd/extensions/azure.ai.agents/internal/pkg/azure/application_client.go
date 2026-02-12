@@ -98,8 +98,8 @@ type AgentDeploymentGetResponse struct {
 }
 
 // CreateAgentDeployment creates an agent deployment on a Cognitive Services Application.
-// If the deployment already exists, it checks whether the agent version matches and skips if current.
-// It polls until the deployment reaches a terminal state.
+// The ARM RP does not support PUT updates or DELETE on existing agentDeployments,
+// so if one already exists it is left as-is.
 func (c *ApplicationClient) CreateAgentDeployment(
 	ctx context.Context,
 	subscriptionID, resourceGroup, accountName, projectName, applicationName string,
@@ -111,21 +111,17 @@ func (c *ApplicationClient) CreateAgentDeployment(
 		subscriptionID, resourceGroup, accountName, projectName, applicationName, deploymentName,
 	)
 
-	// Check if deployment already exists
+	// Check if deployment already exists — ARM RP doesn't support updates or deletes
 	existing, err := c.getAgentDeployment(ctx, url)
 	if err == nil && existing != nil {
-		// Deployment exists — check if agent version already matches
-		for _, agent := range existing.Properties.Agents {
-			if agent.AgentName == agentName && agent.AgentVersion == agentVersion {
-				fmt.Printf("Agent deployment already exists with version %s. Skipping.\n", agentVersion)
-				return nil
-			}
-		}
-		// Version differs — ARM RP doesn't support PUT updates, so delete and recreate
-		fmt.Printf("Existing deployment has different version. Replacing deployment...\n")
-		if delErr := c.deleteAgentDeployment(ctx, url); delErr != nil {
-			fmt.Printf("Warning: could not delete existing deployment: %v. Attempting create anyway.\n", delErr)
-		}
+		fmt.Printf("Agent deployment '%s' already exists (state: %s). Skipping.\n",
+			deploymentName, existing.Properties.State)
+		return nil
+	}
+
+	// Wait for the application's blueprint identity to finish provisioning
+	if err := c.waitForBlueprintReady(ctx, subscriptionID, resourceGroup, accountName, projectName, applicationName); err != nil {
+		return err
 	}
 
 	body := AgentDeploymentRequest{
@@ -171,6 +167,59 @@ func (c *ApplicationClient) CreateAgentDeployment(
 	return c.pollAgentDeployment(ctx, url)
 }
 
+// ApplicationResponse represents the GET response for a Cognitive Services Application
+type ApplicationResponse struct {
+	Properties struct {
+		AgentIdentityBlueprint struct {
+			ProvisioningState string `json:"provisioningState"`
+		} `json:"agentIdentityBlueprint"`
+	} `json:"properties"`
+}
+
+// waitForBlueprintReady polls the application until the agentIdentityBlueprint is no longer "Creating".
+func (c *ApplicationClient) waitForBlueprintReady(
+	ctx context.Context,
+	subscriptionID, resourceGroup, accountName, projectName, applicationName string,
+) error {
+	appURL := fmt.Sprintf(
+		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.CognitiveServices/accounts/%s/projects/%s/applications/%s?api-version=2025-10-01-preview",
+		subscriptionID, resourceGroup, accountName, projectName, applicationName,
+	)
+
+	for i := 0; i < 24; i++ { // up to ~2 minutes
+		req, err := runtime.NewRequest(ctx, http.MethodGet, appURL)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		resp, err := c.armPipeline.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to get application: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("failed to read application response: %w", err)
+		}
+
+		var app ApplicationResponse
+		if err := json.Unmarshal(body, &app); err != nil {
+			return fmt.Errorf("failed to parse application response: %w", err)
+		}
+
+		state := app.Properties.AgentIdentityBlueprint.ProvisioningState
+		if state != "Creating" {
+			return nil
+		}
+
+		fmt.Printf("Waiting for application blueprint to finish provisioning (state: %s)...\n", state)
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("timeout waiting for application blueprint to finish provisioning")
+}
+
 // getAgentDeployment fetches an existing agent deployment, returning nil if not found.
 func (c *ApplicationClient) getAgentDeployment(ctx context.Context, url string) (*AgentDeploymentGetResponse, error) {
 	req, err := runtime.NewRequest(ctx, http.MethodGet, url)
@@ -201,34 +250,6 @@ func (c *ApplicationClient) getAgentDeployment(ctx context.Context, url string) 
 		return nil, err
 	}
 	return &deployment, nil
-}
-
-// deleteAgentDeployment attempts to delete an agent deployment.
-func (c *ApplicationClient) deleteAgentDeployment(ctx context.Context, url string) error {
-	req, err := runtime.NewRequest(ctx, http.MethodDelete, url)
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.armPipeline.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if !runtime.HasStatusCode(resp, http.StatusOK, http.StatusAccepted, http.StatusNoContent) {
-		return runtime.NewResponseError(resp)
-	}
-
-	// Wait for deletion to complete before recreating
-	for i := 0; i < 12; i++ {
-		time.Sleep(5 * time.Second)
-		existing, err := c.getAgentDeployment(ctx, url)
-		if err != nil || existing == nil {
-			return nil
-		}
-	}
-	return fmt.Errorf("timeout waiting for deployment deletion")
 }
 
 func (c *ApplicationClient) pollAgentDeployment(ctx context.Context, url string) error {
