@@ -631,23 +631,25 @@ func (p *AgentServiceTargetProvider) deployArtifacts(
 	// Add agent endpoint
 	if projectEndpoint != "" {
 		agentEndpoint := p.agentEndpoint(projectEndpoint, agentName, agentVersion)
-		artifacts = append(artifacts, &azdext.Artifact{
-			Kind:         azdext.ArtifactKind_ARTIFACT_KIND_ENDPOINT,
-			Location:     agentEndpoint,
-			LocationKind: azdext.LocationKind_LOCATION_KIND_REMOTE,
-			Metadata: map[string]string{
-				"agentName":    agentName,
-				"agentVersion": agentVersion,
-				"label":        "Agent endpoint",
-				"clickable":    "false",
-				"note":         "For information on invoking the agent, see " + output.WithLinkFormat("https://aka.ms/azd-agents-invoke"),
-			},
-		})
+
+		agentEndpointMeta := map[string]string{
+			"agentName":    agentName,
+			"agentVersion": agentVersion,
+			"label":        "Agent endpoint",
+			"clickable":    "false",
+		}
 
 		// Add Application endpoints when Application is enabled
 		if enableApplication && applicationName != "" {
 			apiVersion := "2025-11-15-preview"
 			appBase := fmt.Sprintf("%s/applications/%s", projectEndpoint, applicationName)
+
+			artifacts = append(artifacts, &azdext.Artifact{
+				Kind:         azdext.ArtifactKind_ARTIFACT_KIND_ENDPOINT,
+				Location:     agentEndpoint,
+				LocationKind: azdext.LocationKind_LOCATION_KIND_REMOTE,
+				Metadata:     agentEndpointMeta,
+			})
 
 			artifacts = append(artifacts, &azdext.Artifact{
 				Kind:         azdext.ArtifactKind_ARTIFACT_KIND_ENDPOINT,
@@ -666,7 +668,16 @@ func (p *AgentServiceTargetProvider) deployArtifacts(
 				Metadata: map[string]string{
 					"label":     "Application endpoint (Activity Protocol)",
 					"clickable": "false",
+					"note":      "For information on invoking the agent, see " + output.WithLinkFormat("https://aka.ms/azd-agents-invoke"),
 				},
+			})
+		} else {
+			agentEndpointMeta["note"] = "For information on invoking the agent, see " + output.WithLinkFormat("https://aka.ms/azd-agents-invoke")
+			artifacts = append(artifacts, &azdext.Artifact{
+				Kind:         azdext.ArtifactKind_ARTIFACT_KIND_ENDPOINT,
+				Location:     agentEndpoint,
+				LocationKind: azdext.LocationKind_LOCATION_KIND_REMOTE,
+				Metadata:     agentEndpointMeta,
 			})
 		}
 	}
