@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"maps"
-	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -339,39 +338,48 @@ func ensureSingleAgentRBAC(
 		armauthorization.PrincipalTypeServicePrincipal,
 	)
 	if err != nil {
-		if respErr, ok := errors.AsType[*azcore.ResponseError](err); ok &&
-			respErr.StatusCode == http.StatusForbidden {
-			manualRemediationCommand := fmt.Sprintf(
-				"az role assignment create --assignee-object-id %s --assignee-principal-type ServicePrincipal --role %s --scope %s",
-				strconv.Quote(principalID),
-				strconv.Quote("Azure AI User"),
-				strconv.Quote(info.ProjectScope),
-			)
+		manualRemediationCommand := fmt.Sprintf(
+			"az role assignment create --assignee-object-id %s --assignee-principal-type ServicePrincipal --role %s --scope %s",
+			strconv.Quote(principalID),
+			strconv.Quote("Azure AI User"),
+			strconv.Quote(info.ProjectScope),
+		)
 
-			// Write with warning color so it appears as a yellow warning, not a red error.
-			fmt.Printf("%s\n", output.WithWarningFormat(
-				"Could not assign 'Azure AI User' to agent identity '%s' (403 Forbidden).\n"+
-					"    The agent may not have access to the Foundry Project until this role is assigned.\n"+
-					"    Principal ID: %s\n"+
-					"    Foundry Project scope: %s\n"+
-					"    To remediate manually, run:\n"+
-					"      %s\n"+
-					"    Re-run after granting role assignment write, or set AZD_AGENT_SKIP_ROLE_ASSIGNMENTS=true.",
-				agentName,
-				principalID,
-				info.ProjectScope,
-				manualRemediationCommand,
-			))
-			return nil
+		// Determine a concise error detail for the warning message.
+		detail := err.Error()
+		if respErr, ok := errors.AsType[*azcore.ResponseError](err); ok {
+			detail = fmt.Sprintf("%d %s", respErr.StatusCode, respErr.ErrorCode)
 		}
-		return fmt.Errorf("failed to assign Azure AI User role: %w", err)
+
+		// Role assignment is best-effort — the deployment already succeeded.
+		// Warn instead of failing the entire deploy so users can remediate manually.
+		fmt.Printf("%s\n", output.WithWarningFormat(
+			"Could not assign 'Azure AI User' to agent identity '%s' (%s).\n"+
+				"    The agent may not have access to the Foundry Project until this role is assigned.\n"+
+				"    Principal ID: %s\n"+
+				"    Foundry Project scope: %s\n"+
+				"    To remediate manually, run:\n"+
+				"      %s\n"+
+				"    Or set AZD_AGENT_SKIP_ROLE_ASSIGNMENTS=true to skip RBAC setup.",
+			agentName,
+			detail,
+			principalID,
+			info.ProjectScope,
+			manualRemediationCommand,
+		))
+		return nil
 	}
 
 	if created {
 		fmt.Println("    ✓ Azure AI User → Foundry Project (created)")
 		fmt.Println("    ⏳ Verifying Azure AI User...")
 		if err := verifyRoleAssignment(ctx, cred, principalID, roleAzureAIUser, info.ProjectScope); err != nil {
-			return fmt.Errorf("failed to verify Azure AI User role assignment: %w", err)
+			fmt.Printf("%s\n", output.WithWarningFormat(
+				"Azure AI User role was created but verification timed out for agent '%s'.\n"+
+					"    The role may take a few minutes to propagate. Re-running 'azd deploy' should confirm it.",
+				agentName,
+			))
+			return nil
 		}
 		fmt.Println("    ✓ Azure AI User → Foundry Project (verified)")
 	} else {
