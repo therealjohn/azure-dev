@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+	"github.com/azure/azure-dev/cli/azd/pkg/output"
 	"github.com/fatih/color"
 
 	"azureaiagent/internal/exterrors"
@@ -206,7 +207,7 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 	}
 
 	if opts.Inline {
-		fmt.Println("Initializing project files:")
+		fmt.Println(output.WithGrayFormat("Initializing project files..."))
 	}
 
 	// Write files. We always write non-colliding files; colliding files are
@@ -232,7 +233,9 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 			display := topLevelDisplayPath(e.file.Path)
 			if !shown[display] {
 				shown[display] = true
-				fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(display))
+				// Match the "Downloading sample..." per-file output:
+				// gray, two-space indent, no prefix glyph.
+				fmt.Println(output.WithGrayFormat("  %s", display))
 			}
 		}
 		written++
