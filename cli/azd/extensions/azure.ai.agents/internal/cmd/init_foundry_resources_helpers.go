@@ -343,7 +343,7 @@ func configureFoundryProjectEnv(
 			project.SubscriptionId, project.ResourceGroupName, project.AccountName, project.ProjectName)
 	}
 
-	if err := setEnvValue(ctx, azdClient, envName, "AZURE_AI_PROJECT_ID", resourceId); err != nil {
+	if err := setEnvValue(ctx, azdClient, envName, "FOUNDRY_PROJECT_ARM_ID", resourceId); err != nil {
 		return err
 	}
 
@@ -351,11 +351,11 @@ func configureFoundryProjectEnv(
 		return err
 	}
 
-	if err := setEnvValue(ctx, azdClient, envName, "AZURE_AI_ACCOUNT_NAME", project.AccountName); err != nil {
+	if err := setEnvValue(ctx, azdClient, envName, "FOUNDRY_ACCOUNT_NAME", project.AccountName); err != nil {
 		return err
 	}
 
-	if err := setEnvValue(ctx, azdClient, envName, "AZURE_AI_PROJECT_NAME", project.ProjectName); err != nil {
+	if err := setEnvValue(ctx, azdClient, envName, "FOUNDRY_PROJECT_NAME", project.ProjectName); err != nil {
 		return err
 	}
 
@@ -496,7 +496,7 @@ func configureAcrConnection(
 		selectedConnection = &acrConnections[int(*selectResp.Value)]
 	}
 
-	if err := setEnvValue(ctx, azdClient, envName, "AZURE_AI_PROJECT_ACR_CONNECTION_NAME", selectedConnection.Name); err != nil {
+	if err := setEnvValue(ctx, azdClient, envName, "FOUNDRY_PROJECT_ACR_CONNECTION_NAME", selectedConnection.Name); err != nil {
 		return err
 	}
 	if err := setEnvValue(ctx, azdClient, envName, "AZURE_CONTAINER_REGISTRY_ENDPOINT", normalizeLoginServer(selectedConnection.Target)); err != nil {

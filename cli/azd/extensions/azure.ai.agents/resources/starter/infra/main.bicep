@@ -24,22 +24,22 @@ param principalType string
 // Foundry account / project parameters
 // ─────────────────────────────────────────────────────────────────────
 
-@description('Optional. Name of the AI Account. If not provided, a new one will be created with an auto-generated name. When useExistingAccount is true, this is treated as the existing account name unless aiFoundryAccountResourceId is set (in which case the name is parsed from the ARM ID).')
-param aiFoundryResourceName string = ''
+@description('Optional. Name of the AI Account. If not provided, a new one will be created with an auto-generated name. When useExistingFoundryAccount is true, this is treated as the existing account name unless foundryAccountResourceId is set (in which case the name is parsed from the ARM ID).')
+param foundryAccountName string = ''
 
-@description('Optional. Full ARM resource ID of an existing AI Foundry account to reuse. The account must live in the SAME resource group as this deployment. When set, takes precedence over aiFoundryResourceName for name extraction.')
-param aiFoundryAccountResourceId string = ''
+@description('Optional. Full ARM resource ID of an existing AI Foundry account to reuse. The account must live in the SAME resource group as this deployment. When set, takes precedence over foundryAccountName for name extraction.')
+param foundryAccountResourceId string = ''
 
 @description('Name of the AI Foundry project')
-param aiFoundryProjectName string = 'ai-project-${environmentName}'
+param foundryProjectName string = 'ai-project-${environmentName}'
 
-@description('When true, reference an existing Foundry project instead of creating one. Requires useExistingAccount=true (existing projects only live on existing accounts).')
-param useExistingAiProject bool = false
+@description('When true, reference an existing Foundry project instead of creating one. Requires useExistingFoundryAccount=true (existing projects only live on existing accounts).')
+param useExistingFoundryProject bool = false
 
-@description('When true, reference an existing Foundry account instead of creating one. Implied true when aiFoundryAccountResourceId is non-empty.')
-param useExistingAiAccount bool = false
+@description('When true, reference an existing Foundry account instead of creating one. Implied true when foundryAccountResourceId is non-empty.')
+param useExistingFoundryAccount bool = false
 
-@description('Skip creating the account-scoped capability host. Defaults to true when useExistingAiAccount is true. Set false explicitly to bootstrap the cap host on a BYO account (typically needed for byo-vnet-standard).')
+@description('Skip creating the account-scoped capability host. Defaults to true when useExistingFoundryAccount is true. Set false explicitly to bootstrap the cap host on a BYO account (typically needed for byo-vnet-standard).')
 param skipAccountCapabilityHost bool = false
 
 // ─────────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ param skipAccountCapabilityHost bool = false
   'byo-vnet'
   'byo-vnet-standard'
 ])
-param aiFoundryNetworkMode string = 'none'
+param foundryNetworkMode string = 'none'
 
 @description('Optional. Full ARM resource ID of an existing VNet to reuse. The agent subnet must already be delegated to Microsoft.App/environments. Empty creates a new VNet in this resource group.')
 param existingVnetResourceId string = ''
@@ -103,15 +103,15 @@ param dnsZonesSubscriptionId string = ''
 
 // Extension-injected from azure.yaml service config
 @description('Model deployments (JSON array from azure.yaml)')
-param aiProjectDeploymentsJson string = '[]'
+param foundryProjectDeploymentsJson string = '[]'
 
 @description('Connections (JSON array from azure.yaml)')
-param aiProjectConnectionsJson string = '[]'
+param foundryProjectConnectionsJson string = '[]'
 
 @secure()
 @description('Connection credentials (JSON map from azure.yaml)')
 #disable-next-line secure-parameter-default
-param aiProjectConnectionCredentialsJson string = '{}'
+param foundryProjectConnectionCredentialsJson string = '{}'
 
 // Existing resource detection (set by extension when reusing resources)
 @description('Existing ACR connection name on the Foundry project. If set, ACR creation is skipped.')
@@ -147,24 +147,24 @@ var tags = { 'azd-env-name': environmentName }
 var createAcr = !skipAcr && empty(existingAcrConnectionName)
 var resourceToken = uniqueString(subscription().id, resourceGroupName, location)
 
-// useExistingAiAccount is implied true if the ARM ID was supplied.
-var resolvedUseExistingAiAccount = useExistingAiAccount || !empty(aiFoundryAccountResourceId)
+// useExistingFoundryAccount is implied true if the ARM ID was supplied.
+var resolvedUseExistingFoundryAccount = useExistingFoundryAccount || !empty(foundryAccountResourceId)
 
-// Account name: prefer parsed from ARM ID, else aiFoundryResourceName, else
+// Account name: prefer parsed from ARM ID, else foundryAccountName, else
 // empty (ai-account.bicep auto-generates with a deterministic token).
-var accountNameFromId = !empty(aiFoundryAccountResourceId) ? last(split(aiFoundryAccountResourceId, '/')) : ''
-var resolvedAccountName = !empty(accountNameFromId) ? accountNameFromId : aiFoundryResourceName
+var accountNameFromId = !empty(foundryAccountResourceId) ? last(split(foundryAccountResourceId, '/')) : ''
+var resolvedAccountName = !empty(accountNameFromId) ? accountNameFromId : foundryAccountName
 
 // skipAccountCapabilityHost default: true when reusing existing account, false otherwise.
 // User can override explicitly.
-var resolvedSkipAccountCapHost = skipAccountCapabilityHost || (resolvedUseExistingAiAccount && aiFoundryNetworkMode != 'byo-vnet-standard')
+var resolvedSkipAccountCapHost = skipAccountCapabilityHost || (resolvedUseExistingFoundryAccount && foundryNetworkMode != 'byo-vnet-standard')
 
-var isByoVnet = startsWith(aiFoundryNetworkMode, 'byo-vnet')
-var isStandard = aiFoundryNetworkMode == 'byo-vnet-standard'
+var isByoVnet = startsWith(foundryNetworkMode, 'byo-vnet')
+var isStandard = foundryNetworkMode == 'byo-vnet-standard'
 
 // Standard data connection names (deterministic per RG/location, like other modules use)
 var storageConnectionName = 'storage-${resourceToken}'
-var aiSearchConnectionName = 'aisearch-${resourceToken}'
+var foundrySearchConnectionName = 'aisearch-${resourceToken}'
 var cosmosConnectionName = 'cosmos-${resourceToken}'
 
 resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
@@ -200,17 +200,17 @@ var agentSubnetIdValue = isByoVnet ? vnet.outputs.agentSubnetId : ''
 // Foundry account (new or existing) + account cap host
 // ─────────────────────────────────────────────────────────────────────
 
-module aiAccount './modules/ai-account.bicep' = {
+module foundryAccount './modules/ai-account.bicep' = {
   scope: rg
   name: 'ai-account'
   params: {
     location: location
     tags: tags
     accountName: resolvedAccountName
-    useExistingAccount: resolvedUseExistingAiAccount
-    existingAccountResourceId: aiFoundryAccountResourceId
-    deployments: json(aiProjectDeploymentsJson)
-    networkMode: aiFoundryNetworkMode
+    useExistingAccount: resolvedUseExistingFoundryAccount
+    existingAccountResourceId: foundryAccountResourceId
+    deployments: json(foundryProjectDeploymentsJson)
+    networkMode: foundryNetworkMode
     agentSubnetId: agentSubnetIdValue
     clientIpAllowList: clientIpAllowList
     disablePublicNetworkAccess: disablePublicNetworkAccess
@@ -226,8 +226,8 @@ module accountPeDns './modules/private-endpoint-and-dns.bicep' = if (isByoVnet) 
   scope: rg
   name: 'account-pe-dns'
   params: {
-    aiAccountName: aiAccount.outputs.accountName
-    aiAccountId: aiAccount.outputs.accountId
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryAccountId: foundryAccount.outputs.accountId
     #disable-next-line BCP318
     vnetName: isByoVnet ? vnet.outputs.vnetName : ''
     #disable-next-line BCP318
@@ -245,23 +245,23 @@ module accountPeDns './modules/private-endpoint-and-dns.bicep' = if (isByoVnet) 
 // AI project (new or existing) + monitoring + RBAC
 // ─────────────────────────────────────────────────────────────────────
 
-module aiProject './modules/ai-project.bicep' = {
+module foundryProject './modules/ai-project.bicep' = {
   scope: rg
   name: 'ai-project'
   params: {
     location: location
     tags: tags
-    aiFoundryProjectName: aiFoundryProjectName
-    aiAccountName: aiAccount.outputs.accountName
-    connections: json(aiProjectConnectionsJson)
-    connectionCredentials: json(aiProjectConnectionCredentialsJson)
+    foundryProjectName: foundryProjectName
+    foundryAccountName: foundryAccount.outputs.accountName
+    connections: json(foundryProjectConnectionsJson)
+    connectionCredentials: json(foundryProjectConnectionCredentialsJson)
     principalId: principalId
     principalType: principalType
-    useExistingAiProject: useExistingAiProject
+    useExistingFoundryProject: useExistingFoundryProject
     enableMonitoring: enableMonitoring
     existingAppInsightsConnectionString: existingApplicationInsightsConnectionString
     existingAppInsightsResourceId: existingApplicationInsightsResourceId
-    networkMode: aiFoundryNetworkMode
+    networkMode: foundryNetworkMode
   }
   dependsOn: [
     accountPeDns  // wait for PE/DNS (account must be reachable before project ops in BYO VNet)
@@ -275,7 +275,7 @@ module aiProject './modules/ai-project.bicep' = {
 // modules would risk PUT conflicts on connections or cap host.
 // ─────────────────────────────────────────────────────────────────────
 
-var provisionStandard = isStandard && !useExistingAiProject
+var provisionStandard = isStandard && !useExistingFoundryProject
 
 module storageStandard './modules/storage.bicep' = if (provisionStandard) {
   scope: rg
@@ -283,9 +283,9 @@ module storageStandard './modules/storage.bicep' = if (provisionStandard) {
   params: {
     location: location
     tags: tags
-    aiAccountName: aiAccount.outputs.accountName
-    aiProjectName: aiFoundryProjectName
-    projectPrincipalId: aiProject.outputs.projectPrincipalId
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryProjectName: foundryProjectName
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
     principalId: principalId
     principalType: principalType
     connectionName: storageConnectionName
@@ -294,18 +294,18 @@ module storageStandard './modules/storage.bicep' = if (provisionStandard) {
   }
 }
 
-module aiSearch './modules/ai-search.bicep' = if (provisionStandard) {
+module foundrySearch './modules/ai-search.bicep' = if (provisionStandard) {
   scope: rg
   name: 'ai-search-standard'
   params: {
     location: location
     tags: tags
-    aiAccountName: aiAccount.outputs.accountName
-    aiProjectName: aiFoundryProjectName
-    projectPrincipalId: aiProject.outputs.projectPrincipalId
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryProjectName: foundryProjectName
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
     principalId: principalId
     principalType: principalType
-    connectionName: aiSearchConnectionName
+    connectionName: foundrySearchConnectionName
     existingSearchServiceResourceId: existingAiSearchResourceId
     disablePublicNetworkAccess: disablePublicNetworkAccess
   }
@@ -317,8 +317,8 @@ module cosmos './modules/cosmos.bicep' = if (provisionStandard) {
   params: {
     location: location
     tags: tags
-    aiAccountName: aiAccount.outputs.accountName
-    aiProjectName: aiFoundryProjectName
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryProjectName: foundryProjectName
     connectionName: cosmosConnectionName
     existingCosmosDbAccountResourceId: existingCosmosDbAccountResourceId
     disablePublicNetworkAccess: disablePublicNetworkAccess
@@ -346,9 +346,9 @@ module dataPeDns './modules/private-endpoint-and-dns-data.bicep' = if (provision
     #disable-next-line BCP318
     storageAccountId: provisionStandard ? storageStandard.outputs.accountId : ''
     #disable-next-line BCP318
-    searchServiceName: provisionStandard ? aiSearch.outputs.serviceName : ''
+    searchServiceName: provisionStandard ? foundrySearch.outputs.serviceName : ''
     #disable-next-line BCP318
-    searchServiceId: provisionStandard ? aiSearch.outputs.serviceId : ''
+    searchServiceId: provisionStandard ? foundrySearch.outputs.serviceId : ''
     existingDnsZones: existingDnsZones
     dnsZonesSubscriptionId: empty(dnsZonesSubscriptionId) ? subscription().subscriptionId : dnsZonesSubscriptionId
   }
@@ -361,7 +361,7 @@ module cosmosRbacPre './modules/cosmos-rbac-pre.bicep' = if (provisionStandard) 
   params: {
     #disable-next-line BCP318
     cosmosAccountName: provisionStandard ? cosmos.outputs.accountName : ''
-    projectPrincipalId: aiProject.outputs.projectPrincipalId
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
   }
 }
 
@@ -372,15 +372,15 @@ module projectCapHost './modules/project-cap-host.bicep' = if (provisionStandard
   scope: rg
   name: 'project-cap-host'
   params: {
-    aiAccountName: aiAccount.outputs.accountName
-    aiProjectName: aiProject.outputs.projectName
-    aiSearchConnectionName: aiSearchConnectionName
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryProjectName: foundryProject.outputs.projectName
+    foundrySearchConnectionName: foundrySearchConnectionName
     storageConnectionName: storageConnectionName
     cosmosDbConnectionName: cosmosConnectionName
   }
   dependsOn: [
     storageStandard
-    aiSearch
+    foundrySearch
     cosmos
     cosmosRbacPre
     dataPeDns
@@ -395,8 +395,8 @@ module cosmosRbacPost './modules/cosmos-rbac-post.bicep' = if (provisionStandard
   params: {
     #disable-next-line BCP318
     cosmosAccountName: provisionStandard ? cosmos.outputs.accountName : ''
-    projectPrincipalId: aiProject.outputs.projectPrincipalId
-    projectWorkspaceId: aiProject.outputs.projectWorkspaceId
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
+    projectWorkspaceId: foundryProject.outputs.projectWorkspaceId
   }
   dependsOn: [
     projectCapHost
@@ -409,8 +409,8 @@ module storageRbacStandard './modules/storage-rbac-standard.bicep' = if (provisi
   params: {
     #disable-next-line BCP318
     storageAccountName: provisionStandard ? storageStandard.outputs.accountName : ''
-    projectPrincipalId: aiProject.outputs.projectPrincipalId
-    workspaceId: aiProject.outputs.projectWorkspaceId
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
+    workspaceId: foundryProject.outputs.projectWorkspaceId
   }
   dependsOn: [
     projectCapHost
@@ -427,12 +427,12 @@ module acr './modules/acr.bicep' = if (createAcr) {
   params: {
     location: location
     tags: tags
-    aiAccountName: aiAccount.outputs.accountName
-    aiProjectName: aiProject.outputs.projectName
-    projectPrincipalId: aiProject.outputs.projectPrincipalId
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryProjectName: foundryProject.outputs.projectName
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
     principalId: principalId
     principalType: principalType
-    useExistingAiProject: useExistingAiProject
+    useExistingFoundryProject: useExistingFoundryProject
   }
 }
 
@@ -442,31 +442,31 @@ module acr './modules/acr.bicep' = if (createAcr) {
 
 // Resources
 output AZURE_RESOURCE_GROUP string = resourceGroupName
-output AZURE_AI_ACCOUNT_ID string = aiAccount.outputs.accountId
-output AZURE_AI_ACCOUNT_NAME string = aiAccount.outputs.accountName
-output AZURE_AI_PROJECT_NAME string = aiProject.outputs.projectName
+output FOUNDRY_ACCOUNT_ID string = foundryAccount.outputs.accountId
+output FOUNDRY_ACCOUNT_NAME string = foundryAccount.outputs.accountName
+output FOUNDRY_PROJECT_NAME string = foundryProject.outputs.projectName
 
 // Platform-injected variable names (match hosted agent runtime)
 // See: https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent#platform-injected-environment-variables
-output FOUNDRY_PROJECT_ENDPOINT string = aiProject.outputs.projectEndpoint
-output FOUNDRY_PROJECT_ARM_ID string = aiProject.outputs.projectId
-output AZURE_OPENAI_ENDPOINT string = aiAccount.outputs.openAiEndpoint
+output FOUNDRY_PROJECT_ENDPOINT string = foundryProject.outputs.projectEndpoint
+output FOUNDRY_PROJECT_ARM_ID string = foundryProject.outputs.projectId
+output AZURE_OPENAI_ENDPOINT string = foundryAccount.outputs.openAiEndpoint
 
 // Monitoring (already matches platform-injected name)
-output APPLICATIONINSIGHTS_CONNECTION_STRING string = aiProject.outputs.appInsightsConnectionString
-output APPLICATIONINSIGHTS_RESOURCE_ID string = aiProject.outputs.appInsightsResourceId
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = foundryProject.outputs.appInsightsConnectionString
+output APPLICATIONINSIGHTS_RESOURCE_ID string = foundryProject.outputs.appInsightsResourceId
 
 // Container Registry
 #disable-next-line BCP318
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = createAcr ? acr.outputs.loginServer : existingContainerRegistryEndpoint
 #disable-next-line BCP318
-output AZURE_AI_PROJECT_ACR_CONNECTION_NAME string = createAcr ? acr.outputs.connectionName : existingAcrConnectionName
+output FOUNDRY_PROJECT_ACR_CONNECTION_NAME string = createAcr ? acr.outputs.connectionName : existingAcrConnectionName
 
 // Connections (from azure.yaml)
-output AI_PROJECT_CONNECTION_IDS_JSON string = string(aiProject.outputs.connectionIds)
+output FOUNDRY_PROJECT_CONNECTION_IDS_JSON string = string(foundryProject.outputs.connectionIds)
 
 // Network outputs
-output AZURE_AI_FOUNDRY_NETWORK_MODE string = aiFoundryNetworkMode
+output FOUNDRY_NETWORK_MODE string = foundryNetworkMode
 #disable-next-line BCP318
 output AZURE_VNET_ID string = isByoVnet ? vnet.outputs.vnetId : ''
 #disable-next-line BCP318
@@ -479,8 +479,8 @@ output AZURE_PE_SUBNET_ID string = isByoVnet ? vnet.outputs.peSubnetId : ''
 // Standard data resources
 // Standard data resources (only emitted when isStandard AND a new project was provisioned).
 #disable-next-line BCP318
-output AZURE_AI_PROJECT_STORAGE_CONNECTION_NAME string = provisionStandard ? storageStandard.outputs.connectionName : ''
+output FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME string = provisionStandard ? storageStandard.outputs.connectionName : ''
 #disable-next-line BCP318
-output AZURE_AI_PROJECT_AISEARCH_CONNECTION_NAME string = provisionStandard ? aiSearch.outputs.connectionName : ''
+output FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME string = provisionStandard ? foundrySearch.outputs.connectionName : ''
 #disable-next-line BCP318
-output AZURE_AI_PROJECT_COSMOS_CONNECTION_NAME string = provisionStandard ? cosmos.outputs.connectionName : ''
+output FOUNDRY_PROJECT_COSMOS_CONNECTION_NAME string = provisionStandard ? cosmos.outputs.connectionName : ''

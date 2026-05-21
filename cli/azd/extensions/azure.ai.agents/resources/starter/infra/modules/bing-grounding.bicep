@@ -4,10 +4,10 @@ targetScope = 'resourceGroup'
 param tags object = {}
 
 @description('AI Services account name')
-param aiAccountName string
+param foundryAccountName string
 
 @description('AI project name')
-param aiProjectName string
+param foundryProjectName string
 
 @description('Managed identity principal ID of the AI project')
 param projectPrincipalId string
@@ -41,8 +41,8 @@ resource bingRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 module bingConnection './connection.bicep' = {
   name: 'bing-connection'
   params: {
-    aiAccountName: aiAccountName
-    aiProjectName: aiProjectName
+    foundryAccountName: foundryAccountName
+    foundryProjectName: foundryProjectName
     connectionConfig: {
       name: connectionName
       category: 'GroundingWithBingSearch'

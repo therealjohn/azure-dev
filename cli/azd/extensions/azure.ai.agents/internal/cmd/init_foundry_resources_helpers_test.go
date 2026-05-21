@@ -548,21 +548,21 @@ func TestSetEnvValue_PersistsKeyValue(t *testing.T) {
 
 	// Set a value
 	err := setEnvValue(
-		t.Context(), azdClient, envName, "USE_EXISTING_AI_PROJECT", "true",
+		t.Context(), azdClient, envName, "USE_EXISTING_FOUNDRY_PROJECT", "true",
 	)
 	require.NoError(t, err)
 
 	// Verify it was stored
-	require.Equal(t, "true", envServer.values[envName]["USE_EXISTING_AI_PROJECT"])
+	require.Equal(t, "true", envServer.values[envName]["USE_EXISTING_FOUNDRY_PROJECT"])
 
 	// Overwrite with "false" (simulating re-init choosing "create new")
 	err = setEnvValue(
-		t.Context(), azdClient, envName, "USE_EXISTING_AI_PROJECT", "false",
+		t.Context(), azdClient, envName, "USE_EXISTING_FOUNDRY_PROJECT", "false",
 	)
 	require.NoError(t, err)
 
 	// Verify the value was updated
-	require.Equal(t, "false", envServer.values[envName]["USE_EXISTING_AI_PROJECT"])
+	require.Equal(t, "false", envServer.values[envName]["USE_EXISTING_FOUNDRY_PROJECT"])
 }
 
 func TestMissingInitAzureContextValues(t *testing.T) {

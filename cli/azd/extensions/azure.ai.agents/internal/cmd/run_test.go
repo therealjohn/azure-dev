@@ -446,15 +446,14 @@ func TestAppendFoundryEnvVars(t *testing.T) {
 		}
 	})
 
-	t.Run("maps AZURE_AI_PROJECT_ID to FOUNDRY_PROJECT_ARM_ID", func(t *testing.T) {
+	t.Run("does not map FOUNDRY_PROJECT_ARM_ID to itself", func(t *testing.T) {
 		t.Parallel()
 		azdEnv := map[string]string{
-			"AZURE_AI_PROJECT_ID": "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/acct1/projects/proj1",
+			"FOUNDRY_PROJECT_ARM_ID": "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/acct1/projects/proj1",
 		}
 		env := appendFoundryEnvVars(nil, azdEnv, "")
-		expected := "FOUNDRY_PROJECT_ARM_ID=/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/acct1/projects/proj1"
-		if !slices.Contains(env, expected) {
-			t.Errorf("expected %q in env, got %v", expected, env)
+		if len(env) != 0 {
+			t.Errorf("expected no translated env vars, got %v", env)
 		}
 	})
 
@@ -486,13 +485,13 @@ func TestAppendFoundryEnvVars(t *testing.T) {
 		t.Parallel()
 		azdEnv := map[string]string{
 			"FOUNDRY_PROJECT_ENDPOINT": "https://acct.services.ai.azure.com/api/projects/proj",
-			"AZURE_AI_PROJECT_ID":      "/subscriptions/sub/rg/rg/acct/proj",
+			"FOUNDRY_PROJECT_ARM_ID":   "/subscriptions/sub/rg/rg/acct/proj",
 			"AGENT_AGENT1_NAME":        "agent1",
 			"AGENT_AGENT1_VERSION":     "v1",
 		}
 		env := appendFoundryEnvVars(nil, azdEnv, "agent1")
-		if len(env) != 3 {
-			t.Errorf("expected 3 env vars, got %d: %v", len(env), env)
+		if len(env) != 2 {
+			t.Errorf("expected 2 env vars, got %d: %v", len(env), env)
 		}
 	})
 
@@ -515,8 +514,7 @@ func TestAppendFoundryEnvVars(t *testing.T) {
 			}
 		}
 
-		// AZURE_AI_PROJECT_ID has no explicit FOUNDRY_PROJECT_ARM_ID, so it should still be skipped
-		// (it's not in azdEnv either, so appendFoundryEnvVars skips it because the source key is empty)
+		// No source key maps directly to a FOUNDRY_* key beyond the AGENT_* mappings.
 		if len(env) != 0 {
 			t.Errorf("expected no translated env vars, got %v", env)
 		}
@@ -532,7 +530,7 @@ func TestAppendFoundryEnvVars(t *testing.T) {
 		}
 		azdEnv := map[string]string{
 			"FOUNDRY_PROJECT_ENDPOINT": "https://from-azd.services.ai.azure.com",
-			"AZURE_AI_PROJECT_ID":      "/subscriptions/sub/rg/rg/acct/proj",
+			"FOUNDRY_PROJECT_ARM_ID":   "/subscriptions/sub/rg/rg/acct/proj",
 			"AGENT_MY_SVC_NAME":        "my-agent",
 			"AGENT_MY_SVC_VERSION":     "v2",
 		}
@@ -557,11 +555,7 @@ func TestAppendFoundryEnvVars(t *testing.T) {
 			t.Errorf("expected exactly 1 FOUNDRY_AGENT_NAME entry (from shell), got %d in %v", foundryAgentNameCount, env)
 		}
 
-		// FOUNDRY_PROJECT_ARM_ID and FOUNDRY_AGENT_VERSION should still be translated
-		// since they are NOT already present in the env slice.
-		if !slices.Contains(env, "FOUNDRY_PROJECT_ARM_ID=/subscriptions/sub/rg/rg/acct/proj") {
-			t.Errorf("expected FOUNDRY_PROJECT_ARM_ID to be translated, got %v", env)
-		}
+		// FOUNDRY_AGENT_VERSION should still be translated since it is NOT already present in the env slice.
 		if !slices.Contains(env, "FOUNDRY_AGENT_VERSION=v2") {
 			t.Errorf("expected FOUNDRY_AGENT_VERSION to be translated, got %v", env)
 		}

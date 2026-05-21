@@ -4,7 +4,7 @@ targetScope = 'resourceGroup'
 param searchServiceName string
 
 @description('AI Foundry account name (target of the search-to-account RBAC).')
-param aiAccountName string
+param foundryAccountName string
 
 @description('Project managed identity principal ID.')
 param projectPrincipalId string
@@ -21,7 +21,7 @@ resource searchService 'Microsoft.Search/searchServices@2024-06-01-preview' exis
 
 // Search -> AI Services: Cognitive Services OpenAI User
 resource searchToAiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(aiAccountName, searchService.id, '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
+  name: guid(foundryAccountName, searchService.id, '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
   properties: {
     principalId: searchService.identity.principalId
     principalType: 'ServicePrincipal'

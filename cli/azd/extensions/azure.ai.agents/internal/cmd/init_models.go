@@ -175,10 +175,10 @@ func (a *InitAction) getModelDeploymentDetails(
 ) (*project.Deployment, bool, error) {
 	resp, err := a.azdClient.Environment().GetValue(ctx, &azdext.GetEnvRequest{
 		EnvName: a.environment.Name,
-		Key:     "AZURE_AI_PROJECT_ID",
+		Key:     "FOUNDRY_PROJECT_ARM_ID",
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to get the environment variable AZURE_AI_PROJECT_ID from your azd environment: %w", err)
+		return nil, false, fmt.Errorf("failed to get the environment variable FOUNDRY_PROJECT_ARM_ID from your azd environment: %w", err)
 	}
 
 	foundryProjectId := resp.Value
@@ -186,7 +186,7 @@ func (a *InitAction) getModelDeploymentDetails(
 		parts := strings.Split(foundryProjectId, "/")
 		if len(parts) < 9 {
 			return nil, false, fmt.Errorf(
-				"invalid AZURE_AI_PROJECT_ID format: expected at least 9 path segments, got %d", len(parts))
+				"invalid FOUNDRY_PROJECT_ARM_ID format: expected at least 9 path segments, got %d", len(parts))
 		}
 
 		subscription := parts[2]
@@ -1020,7 +1020,7 @@ func (a *InitAction) ProcessModels(ctx context.Context, manifest *agent_yaml.Age
 		return setEnvValue(ctx, a.azdClient, a.environment.Name, key, value)
 	}
 	if err := persistFirstDeploymentName(ctx, setEnv, deploymentDetails); err != nil {
-		return nil, nil, fmt.Errorf("failed to set AZURE_AI_MODEL_DEPLOYMENT_NAME: %w", err)
+		return nil, nil, fmt.Errorf("failed to set FOUNDRY_MODEL_DEPLOYMENT_NAME: %w", err)
 	}
 
 	// Update the AI_AGENT_PENDING_PROVISION signal based on the
@@ -1036,7 +1036,7 @@ func (a *InitAction) ProcessModels(ctx context.Context, manifest *agent_yaml.Age
 		log.Printf("warning: failed to update model_deployment provision signal: %v", err)
 	}
 
-	log.Println("Model deployment details processed and injected into agent definition. Deployment details can also be found in the JSON formatted AI_PROJECT_DEPLOYMENTS environment variable.")
+	log.Println("Model deployment details processed and injected into agent definition. Deployment details can also be found in the JSON formatted FOUNDRY_PROJECT_DEPLOYMENTS environment variable.")
 
 	return updatedManifest, deploymentDetails, nil
 }
@@ -1045,7 +1045,7 @@ func (a *InitAction) ProcessModels(ctx context.Context, manifest *agent_yaml.Age
 type envValueSetter func(ctx context.Context, key, value string) error
 
 // persistFirstDeploymentName persists the first deployment's name as
-// AZURE_AI_MODEL_DEPLOYMENT_NAME so templates and agent code can reference it.
+// FOUNDRY_MODEL_DEPLOYMENT_NAME so templates and agent code can reference it.
 // It is a no-op when the deployments slice is empty.
 func persistFirstDeploymentName(
 	ctx context.Context,
@@ -1056,5 +1056,5 @@ func persistFirstDeploymentName(
 		return nil
 	}
 
-	return setEnv(ctx, "AZURE_AI_MODEL_DEPLOYMENT_NAME", deployments[0].Name)
+	return setEnv(ctx, "FOUNDRY_MODEL_DEPLOYMENT_NAME", deployments[0].Name)
 }

@@ -73,6 +73,49 @@
 - [[#8293]](https://github.com/Azure/azure-dev/pull/8293) Remove deprecated runtimes (Python 3.11/3.12 and .NET 8/9) from `azd ai agent init`.
 - [[#8243]](https://github.com/Azure/azure-dev/pull/8243) Migrate project endpoint commands to the new scaffold.
 
+### Breaking Changes
+
+- Consolidated all extension-owned environment variables under a single `FOUNDRY_*` prefix for naming consistency with the platform-injected hosted-agent runtime variables. The old `AZURE_AI_*`, `AI_FOUNDRY_*`, `AI_PROJECT_*`, and `USE_EXISTING_AI_*` prefixes are no longer recognized by the extension or its starter Bicep template. Existing environments must rename keys in `.env` (or re-run `azd up`) to pick up the new names. Core azd variables (`AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CONTAINER_REGISTRY_*`, etc.), platform-injected names (`APPLICATIONINSIGHTS_*`), and network primitives (`AZURE_VNET_*`, `AZURE_AGENT_SUBNET_ID`, `AZURE_PE_SUBNET_ID`, `AZURE_OPENAI_ENDPOINT`) are unchanged. Full rename table:
+
+  | Old name | New name |
+  | --- | --- |
+  | `AZURE_AI_PROJECT_ID` | `FOUNDRY_PROJECT_ARM_ID` |
+  | `AZURE_AI_ACCOUNT_ID` | `FOUNDRY_ACCOUNT_ID` |
+  | `AZURE_AI_ACCOUNT_NAME` | `FOUNDRY_ACCOUNT_NAME` |
+  | `AZURE_AI_PROJECT_NAME` | `FOUNDRY_PROJECT_NAME` |
+  | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | `FOUNDRY_MODEL_DEPLOYMENT_NAME` |
+  | `AZURE_AI_PROJECT_ACR_CONNECTION_NAME` | `FOUNDRY_PROJECT_ACR_CONNECTION_NAME` |
+  | `AZURE_AI_PROJECT_STORAGE_CONNECTION_NAME` | `FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME` |
+  | `AZURE_AI_PROJECT_AISEARCH_CONNECTION_NAME` | `FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME` |
+  | `AZURE_AI_PROJECT_COSMOS_CONNECTION_NAME` | `FOUNDRY_PROJECT_COSMOS_CONNECTION_NAME` |
+  | `AZURE_AI_FOUNDRY_NETWORK_MODE` | `FOUNDRY_NETWORK_MODE` |
+  | `AI_FOUNDRY_NETWORK_MODE` | `FOUNDRY_NETWORK_MODE` |
+  | `AI_FOUNDRY_ACCOUNT_RESOURCE_ID` | `FOUNDRY_ACCOUNT_RESOURCE_ID` |
+  | `AI_FOUNDRY_VNET_RESOURCE_ID` | `FOUNDRY_VNET_RESOURCE_ID` |
+  | `AI_FOUNDRY_VNET_NAME` | `FOUNDRY_VNET_NAME` |
+  | `AI_FOUNDRY_VNET_ADDRESS_PREFIX` | `FOUNDRY_VNET_ADDRESS_PREFIX` |
+  | `AI_FOUNDRY_AGENT_SUBNET_NAME` | `FOUNDRY_AGENT_SUBNET_NAME` |
+  | `AI_FOUNDRY_AGENT_SUBNET_PREFIX` | `FOUNDRY_AGENT_SUBNET_PREFIX` |
+  | `AI_FOUNDRY_PE_SUBNET_NAME` | `FOUNDRY_PE_SUBNET_NAME` |
+  | `AI_FOUNDRY_PE_SUBNET_PREFIX` | `FOUNDRY_PE_SUBNET_PREFIX` |
+  | `AI_FOUNDRY_CLIENT_IP_ALLOW_LIST` | `FOUNDRY_CLIENT_IP_ALLOW_LIST` |
+  | `AI_FOUNDRY_DISABLE_PUBLIC_NETWORK_ACCESS` | `FOUNDRY_DISABLE_PUBLIC_NETWORK_ACCESS` |
+  | `AI_FOUNDRY_EXISTING_DNS_ZONES` | `FOUNDRY_EXISTING_DNS_ZONES` |
+  | `AI_FOUNDRY_DNS_ZONES_SUBSCRIPTION_ID` | `FOUNDRY_DNS_ZONES_SUBSCRIPTION_ID` |
+  | `AI_PROJECT_DEPLOYMENTS` | `FOUNDRY_PROJECT_DEPLOYMENTS` |
+  | `AI_PROJECT_CONNECTIONS` | `FOUNDRY_PROJECT_CONNECTIONS` |
+  | `AI_PROJECT_CONNECTION_CREDENTIALS` | `FOUNDRY_PROJECT_CONNECTION_CREDENTIALS` |
+  | `AI_PROJECT_CONNECTION_IDS_JSON` | `FOUNDRY_PROJECT_CONNECTION_IDS_JSON` |
+  | `AI_PROJECT_DEPENDENT_RESOURCES` | `FOUNDRY_PROJECT_DEPENDENT_RESOURCES` |
+  | `AI_PROJECT_TOOL_CONNECTIONS` | `FOUNDRY_PROJECT_TOOL_CONNECTIONS` |
+  | `AI_PROJECT_STORAGE_RESOURCE_ID` | `FOUNDRY_PROJECT_STORAGE_RESOURCE_ID` |
+  | `AI_PROJECT_AISEARCH_RESOURCE_ID` | `FOUNDRY_PROJECT_AISEARCH_RESOURCE_ID` |
+  | `AI_PROJECT_COSMOSDB_RESOURCE_ID` | `FOUNDRY_PROJECT_COSMOSDB_RESOURCE_ID` |
+  | `USE_EXISTING_AI_ACCOUNT` | `USE_EXISTING_FOUNDRY_ACCOUNT` |
+  | `USE_EXISTING_AI_PROJECT` | `USE_EXISTING_FOUNDRY_PROJECT` |
+
+  This also fixes a regression where `azd up` failed with `Microsoft Foundry project ID is required: AZURE_AI_PROJECT_ID is not set` after provisioning, because the embedded starter Bicep template had begun emitting `FOUNDRY_PROJECT_ARM_ID` while the rest of the code path still read `AZURE_AI_PROJECT_ID`.
+
 ## 0.1.32-preview (2026-05-18)
 
 - [[#8223]](https://github.com/Azure/azure-dev/pull/8223) Add `.agentignore` support for controlling which files are excluded from agent code-deploy ZIP packaging. Uses `.gitignore` syntax with sensible defaults generated during `azd ai agent init`.

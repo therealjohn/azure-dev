@@ -23,10 +23,10 @@ param tags object = {}
 param existingCosmosDbAccountResourceId string = ''
 
 @description('AI Foundry account name (used to wire the project connection).')
-param aiAccountName string
+param foundryAccountName string
 
 @description('AI Foundry project name (used to wire the project connection).')
-param aiProjectName string
+param foundryProjectName string
 
 @description('Project connection name to create on the Foundry project.')
 param connectionName string
@@ -85,8 +85,8 @@ var resolvedEndpoint = hasExisting ? existingCosmos.properties.documentEndpoint 
 module cosmosConnection './connection.bicep' = {
   name: 'cosmos-connection-${resolvedAccountName}'
   params: {
-    aiAccountName: aiAccountName
-    aiProjectName: aiProjectName
+    foundryAccountName: foundryAccountName
+    foundryProjectName: foundryProjectName
     connectionConfig: {
       name: connectionName
       category: 'CosmosDB'

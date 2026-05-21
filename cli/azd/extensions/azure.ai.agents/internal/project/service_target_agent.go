@@ -415,7 +415,7 @@ func (p *AgentServiceTargetProvider) GetTargetResource(
 		return nil, exterrors.Validation(
 			exterrors.CodeInvalidFoundryResourceId,
 			"invalid resource ID: missing parent account",
-			"verify the AZURE_AI_PROJECT_ID is a valid Microsoft Foundry project resource ID",
+			"verify the FOUNDRY_PROJECT_ARM_ID is a valid Microsoft Foundry project resource ID",
 		)
 	}
 
@@ -1301,7 +1301,7 @@ func (p *AgentServiceTargetProvider) finalizeDeploy(
 	artifacts := p.deployArtifacts(
 		agentVersion.Name,
 		agentVersion.Version,
-		azdEnv["AZURE_AI_PROJECT_ID"],
+		azdEnv["FOUNDRY_PROJECT_ARM_ID"],
 		azdEnv["FOUNDRY_PROJECT_ENDPOINT"],
 		protocols,
 	)
@@ -2283,7 +2283,7 @@ func (p *AgentServiceTargetProvider) resolveEnvironmentVariables(value string, a
 }
 
 // ensureFoundryProject ensures the Foundry project resource ID is parsed and stored.
-// Checks for AZURE_AI_PROJECT_ID environment variable.
+// Checks for FOUNDRY_PROJECT_ARM_ID environment variable.
 func (p *AgentServiceTargetProvider) ensureFoundryProject(ctx context.Context) error {
 	if p.foundryProject != nil {
 		return nil
@@ -2292,22 +2292,22 @@ func (p *AgentServiceTargetProvider) ensureFoundryProject(ctx context.Context) e
 	// Get all environment values
 	resp, err := p.azdClient.Environment().GetValue(ctx, &azdext.GetEnvRequest{
 		EnvName: p.env.Name,
-		Key:     "AZURE_AI_PROJECT_ID",
+		Key:     "FOUNDRY_PROJECT_ARM_ID",
 	})
 	if err != nil {
 		return exterrors.Dependency(
 			exterrors.CodeEnvironmentValuesFailed,
-			fmt.Sprintf("failed to get AZURE_AI_PROJECT_ID: %s", err),
+			fmt.Sprintf("failed to get FOUNDRY_PROJECT_ARM_ID: %s", err),
 			"run 'azd env get-values' to verify environment state",
 		)
 	}
 
-	// Check for Microsoft Foundry project resource ID (try both env var names)
+	// Check for Microsoft Foundry project resource ID
 	foundryResourceID := resp.Value
 	if foundryResourceID == "" {
 		return exterrors.Dependency(
 			exterrors.CodeMissingAiProjectId,
-			"Microsoft Foundry project ID is required: AZURE_AI_PROJECT_ID is not set",
+			"Microsoft Foundry project ID is required: FOUNDRY_PROJECT_ARM_ID is not set",
 			"run 'azd provision' or connect to an existing project via 'azd ai agent init --project-id <resource-id>'",
 		)
 	}
@@ -2318,7 +2318,7 @@ func (p *AgentServiceTargetProvider) ensureFoundryProject(ctx context.Context) e
 		return exterrors.Validation(
 			exterrors.CodeInvalidAiProjectId,
 			fmt.Sprintf("failed to parse Microsoft Foundry project ID: %s", err),
-			"verify the AZURE_AI_PROJECT_ID is a valid ARM resource ID",
+			"verify the FOUNDRY_PROJECT_ARM_ID is a valid ARM resource ID",
 		)
 	}
 

@@ -569,12 +569,12 @@ func (a *InitFromCodeAction) createDefinitionFromLocalAgent(ctx context.Context)
 		})
 
 		definition.EnvironmentVariables = appendEnvVar(definition.EnvironmentVariables, agent_yaml.EnvironmentVariable{
-			Name:  "AZURE_AI_MODEL_DEPLOYMENT_NAME",
-			Value: "${AZURE_AI_MODEL_DEPLOYMENT_NAME}",
+			Name:  "FOUNDRY_MODEL_DEPLOYMENT_NAME",
+			Value: "${FOUNDRY_MODEL_DEPLOYMENT_NAME}",
 		})
 
-		if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "AZURE_AI_MODEL_DEPLOYMENT_NAME", existingDeployment.Name); err != nil {
-			return nil, fmt.Errorf("failed to set AZURE_AI_MODEL_DEPLOYMENT_NAME: %w", err)
+		if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "FOUNDRY_MODEL_DEPLOYMENT_NAME", existingDeployment.Name); err != nil {
+			return nil, fmt.Errorf("failed to set FOUNDRY_MODEL_DEPLOYMENT_NAME: %w", err)
 		}
 
 		// Existing deployment chosen — clear any prior
@@ -607,12 +607,12 @@ func (a *InitFromCodeAction) createDefinitionFromLocalAgent(ctx context.Context)
 		a.needsProvision = true
 
 		definition.EnvironmentVariables = appendEnvVar(definition.EnvironmentVariables, agent_yaml.EnvironmentVariable{
-			Name:  "AZURE_AI_MODEL_DEPLOYMENT_NAME",
-			Value: "${AZURE_AI_MODEL_DEPLOYMENT_NAME}",
+			Name:  "FOUNDRY_MODEL_DEPLOYMENT_NAME",
+			Value: "${FOUNDRY_MODEL_DEPLOYMENT_NAME}",
 		})
 
-		if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "AZURE_AI_MODEL_DEPLOYMENT_NAME", modelDetails.ModelName); err != nil {
-			return nil, fmt.Errorf("failed to set AZURE_AI_MODEL_DEPLOYMENT_NAME: %w", err)
+		if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "FOUNDRY_MODEL_DEPLOYMENT_NAME", modelDetails.ModelName); err != nil {
+			return nil, fmt.Errorf("failed to set FOUNDRY_MODEL_DEPLOYMENT_NAME: %w", err)
 		}
 
 		// New model deployment configured — record that the

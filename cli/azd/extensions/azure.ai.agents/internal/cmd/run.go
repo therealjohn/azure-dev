@@ -733,27 +733,10 @@ func venvBinDir(venvDir string) string {
 //
 // The mapping is:
 //
-//	AZURE_AI_PROJECT_ID                → FOUNDRY_PROJECT_ARM_ID
 //	AGENT_{SVC}_NAME                   → FOUNDRY_AGENT_NAME
 //	AGENT_{SVC}_VERSION                → FOUNDRY_AGENT_VERSION
 //	APPLICATIONINSIGHTS_CONNECTION_STRING (unchanged — already matches platform name)
 func appendFoundryEnvVars(env []string, azdEnv map[string]string, serviceName string) []string {
-	// Static mappings from azd env key names to FOUNDRY_* env var names
-	staticMappings := []struct {
-		azdKey     string
-		foundryKey string
-	}{
-		{"AZURE_AI_PROJECT_ID", "FOUNDRY_PROJECT_ARM_ID"},
-	}
-
-	for _, m := range staticMappings {
-		if v := azdEnv[m.azdKey]; v != "" {
-			if _, exists := azdEnv[m.foundryKey]; !exists && !envSliceHasKey(env, m.foundryKey) {
-				env = append(env, fmt.Sprintf("%s=%s", m.foundryKey, v))
-			}
-		}
-	}
-
 	// Service-specific mappings (AGENT_{SVC}_NAME → FOUNDRY_AGENT_NAME, etc.)
 	if serviceName != "" {
 		serviceKey := toServiceKey(serviceName)

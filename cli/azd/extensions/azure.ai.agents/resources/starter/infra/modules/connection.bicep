@@ -1,10 +1,10 @@
 targetScope = 'resourceGroup'
 
 @description('AI Services account name')
-param aiAccountName string
+param foundryAccountName string
 
 @description('AI project name')
-param aiProjectName string
+param foundryProjectName string
 
 @description('Connection configuration object')
 param connectionConfig object
@@ -13,16 +13,16 @@ param connectionConfig object
 @description('Credentials for the connection (e.g. { key: "..." } for ApiKey)')
 param credentials object = {}
 
-resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
-  name: aiAccountName
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
+  name: foundryAccountName
 
   resource project 'projects' existing = {
-    name: aiProjectName
+    name: foundryProjectName
   }
 }
 
 resource connection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = {
-  parent: aiAccount::project
+  parent: foundryAccount::project
   name: connectionConfig.name
   properties: {
     category: connectionConfig.category

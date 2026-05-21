@@ -428,7 +428,7 @@ func TestWriteDefinitionToSrcDir(t *testing.T) {
 				{Protocol: "responses", Version: "1.0.0"},
 			},
 			EnvironmentVariables: &[]agent_yaml.EnvironmentVariable{
-				{Name: "AZURE_AI_MODEL_DEPLOYMENT_NAME", Value: "${AZURE_AI_MODEL_DEPLOYMENT_NAME}"},
+				{Name: "FOUNDRY_MODEL_DEPLOYMENT_NAME", Value: "${FOUNDRY_MODEL_DEPLOYMENT_NAME}"},
 			},
 		}
 
@@ -451,7 +451,7 @@ func TestWriteDefinitionToSrcDir(t *testing.T) {
 
 		contentStr := string(content)
 		// Verify key content is present in the YAML
-		if !containsAll(contentStr, "name: test-agent", "kind: hosted", "responses", "AZURE_AI_MODEL_DEPLOYMENT_NAME") {
+		if !containsAll(contentStr, "name: test-agent", "kind: hosted", "responses", "FOUNDRY_MODEL_DEPLOYMENT_NAME") {
 			t.Errorf("written content missing expected fields:\n%s", contentStr)
 		}
 		// AZURE_OPENAI_ENDPOINT and FOUNDRY_PROJECT_ENDPOINT should NOT be written to agent.yaml.

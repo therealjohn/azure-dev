@@ -7,10 +7,10 @@ param location string = resourceGroup().location
 param tags object = {}
 
 @description('AI Services account name')
-param aiAccountName string
+param foundryAccountName string
 
 @description('AI project name')
-param aiProjectName string
+param foundryProjectName string
 
 @description('Managed identity principal ID of the AI project')
 param projectPrincipalId string
@@ -71,7 +71,7 @@ module searchRbac './ai-search-rbac.bicep' = {
   scope: resourceGroup(existingSubId, existingRg)
   params: {
     searchServiceName: resolvedName
-    aiAccountName: aiAccountName
+    foundryAccountName: foundryAccountName
     projectPrincipalId: projectPrincipalId
     principalId: principalId
     principalType: principalType
@@ -85,8 +85,8 @@ module searchRbac './ai-search-rbac.bicep' = {
 module searchConnection './connection.bicep' = {
   name: 'search-connection'
   params: {
-    aiAccountName: aiAccountName
-    aiProjectName: aiProjectName
+    foundryAccountName: foundryAccountName
+    foundryProjectName: foundryProjectName
     connectionConfig: {
       name: connectionName
       category: 'CognitiveSearch'

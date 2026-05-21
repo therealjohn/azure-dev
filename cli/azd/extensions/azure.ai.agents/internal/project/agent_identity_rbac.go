@@ -128,10 +128,10 @@ func EnsureAgentIdentityRBAC(
 
 	projectResp, err := envClient.GetValue(ctx, &azdext.GetEnvRequest{
 		EnvName: envName,
-		Key:     "AZURE_AI_PROJECT_ID",
+		Key:     "FOUNDRY_PROJECT_ARM_ID",
 	})
 	if err != nil || projectResp.Value == "" {
-		return fmt.Errorf("AZURE_AI_PROJECT_ID not set, unable to ensure agent identity RBAC")
+		return fmt.Errorf("FOUNDRY_PROJECT_ARM_ID not set, unable to ensure agent identity RBAC")
 	}
 
 	info, err := parseAgentIdentityInfo(projectResp.Value)

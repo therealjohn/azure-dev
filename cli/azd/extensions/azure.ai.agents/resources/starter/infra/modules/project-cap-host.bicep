@@ -16,13 +16,13 @@ targetScope = 'resourceGroup'
 */
 
 @description('AI Foundry account name in the current RG.')
-param aiAccountName string
+param foundryAccountName string
 
 @description('AI Foundry project name (under the account).')
-param aiProjectName string
+param foundryProjectName string
 
 @description('Project connection name for the AI Search service (vectorStoreConnections).')
-param aiSearchConnectionName string
+param foundrySearchConnectionName string
 
 @description('Project connection name for the Storage account (storageConnections).')
 param storageConnectionName string
@@ -30,22 +30,22 @@ param storageConnectionName string
 @description('Project connection name for the Cosmos DB account (threadStorageConnections).')
 param cosmosDbConnectionName string
 
-resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: aiAccountName
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+  name: foundryAccountName
 
   resource project 'projects' existing = {
-    name: aiProjectName
+    name: foundryProjectName
   }
 }
 
 resource projectCapHost 'Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-04-01-preview' = {
-  parent: aiAccount::project
+  parent: foundryAccount::project
   name: 'caphostproj'
   properties: {
     #disable-next-line BCP037
     capabilityHostKind: 'Agents'
     #disable-next-line BCP037
-    vectorStoreConnections: [aiSearchConnectionName]
+    vectorStoreConnections: [foundrySearchConnectionName]
     #disable-next-line BCP037
     storageConnections: [storageConnectionName]
     #disable-next-line BCP037

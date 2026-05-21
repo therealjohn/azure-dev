@@ -146,21 +146,97 @@ specific version of the tool installed on the machine.
 
 ### azure.ai.agents
 
+The `azure.ai.agents` extension reads and writes a number of environment variables to (1) capture provisioning outputs from the starter Bicep template (`infra/main.bicep`) into the active azd environment, (2) consume those values back during agent operations, and (3) accept user-supplied inputs that control optional infrastructure features. Most extension-owned variables use the `FOUNDRY_*` prefix for consistency; `FOUNDRY_PROJECT_ARM_ID` and `FOUNDRY_PROJECT_ENDPOINT` additionally match the platform-injected names used by the hosted agent runtime so the same code path works locally and in a hosted container.
+
+#### Foundry project (provisioning outputs)
+
 | Variable | Description |
 | --- | --- |
-| `AZURE_AI_PROJECT_ID` | The Microsoft Foundry project resource ID used by the `azure.ai.agents` extension. |
-| `FOUNDRY_PROJECT_ENDPOINT` | The Microsoft Foundry project endpoint used by the `azure.ai.agents` extension. Read first from the active azd environment and, if not present, from the host shell environment as an endpoint-resolution fallback. |
-| `AZURE_AI_PROJECT_PRINCIPAL_ID` | The principal ID associated with the Microsoft Foundry project identity. |
-| `AZURE_AI_ACCOUNT_NAME` | The Microsoft Foundry account name associated with the project. |
-| `AZURE_AI_PROJECT_NAME` | The Microsoft Foundry project name. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | The default model deployment name used for generated agent code and templates. |
-| `AZURE_AI_PROJECT_ACR_CONNECTION_NAME` | The Azure Container Registry connection name used by the extension for hosted agents. |
-| `AI_PROJECT_DEPLOYMENTS` | JSON-encoded deployment metadata populated by the extension for agent workflows. |
-| `AI_PROJECT_DEPENDENT_RESOURCES` | JSON-encoded dependent resource metadata populated by the extension for agent workflows. |
-| `AZD_AGENT_SKIP_ACR` | If `true`, signals the Bicep template to skip Azure Container Registry creation during provisioning. Automatically set by `azd agent init` for code-deploy scenarios (where no container image is built). |
-| `ENABLE_HOSTED_AGENTS` | If set, indicates that hosted agents are enabled for the current azd environment. |
-| `ENABLE_CONTAINER_AGENTS` | If set, indicates that container agents are enabled for the current azd environment. |
-| `AGENT_DEFINITION_PATH` | Path to an agent definition file for AI agent workflows. |
+| `FOUNDRY_PROJECT_ARM_ID` | The Microsoft Foundry project ARM resource ID. Read by `azd ai agent deploy`, `azd ai agent run`, `azd ai agent show`, and related commands. |
+| `FOUNDRY_PROJECT_ENDPOINT` | The Microsoft Foundry project endpoint. Read first from the active azd environment and, if not present, from the host shell environment as a fallback. |
+| `FOUNDRY_ACCOUNT_ID` | The Microsoft Foundry account (Cognitive Services) ARM resource ID. |
+| `FOUNDRY_ACCOUNT_NAME` | The Microsoft Foundry account name. |
+| `FOUNDRY_PROJECT_NAME` | The Microsoft Foundry project name. |
+| `AZURE_OPENAI_ENDPOINT` | The Azure OpenAI inference endpoint exposed by the Foundry account. |
+| `FOUNDRY_MODEL_DEPLOYMENT_NAME` | Default model deployment name selected during `azd ai agent init`. Used in generated agent code and templates. |
+
+#### Monitoring and registry (provisioning outputs)
+
+| Variable | Description |
+| --- | --- |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Application Insights connection string for the project. Name matches the platform-injected variable used by the hosted runtime. |
+| `APPLICATIONINSIGHTS_RESOURCE_ID` | Application Insights ARM resource ID. |
+| `APPLICATIONINSIGHTS_CONNECTION_NAME` | Foundry project connection name pointing at Application Insights. |
+| `AZURE_CONTAINER_REGISTRY_RESOURCE_ID` | Azure Container Registry ARM resource ID (the registry endpoint itself is in the core `AZURE_CONTAINER_REGISTRY_ENDPOINT` variable). |
+| `FOUNDRY_PROJECT_ACR_CONNECTION_NAME` | Foundry project connection name pointing at the Container Registry. |
+| `FOUNDRY_PROJECT_CONNECTION_IDS_JSON` | JSON map of connection name to ARM resource ID for every connection declared in `azure.yaml`. |
+| `FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME` | Foundry project connection name for the Storage account (Standard agents only). |
+| `FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME` | Foundry project connection name for the Azure AI Search service (Standard agents only). |
+| `FOUNDRY_PROJECT_COSMOS_CONNECTION_NAME` | Foundry project connection name for the Cosmos DB account (Standard agents only). |
+
+#### Networking (provisioning outputs)
+
+| Variable | Description |
+| --- | --- |
+| `FOUNDRY_NETWORK_MODE` | Foundry network mode in effect (`none`, `managedVnet`, or `byoVnet`). Also accepted as a Bicep input -- see [Bring-your-own infrastructure](#bring-your-own-infrastructure-bicep-inputs). |
+| `AZURE_VNET_ID` | ARM resource ID of the VNet attached to the Foundry account (empty unless `FOUNDRY_NETWORK_MODE=byoVnet`). |
+| `AZURE_VNET_NAME` | VNet name (empty unless BYO VNet). |
+| `AZURE_AGENT_SUBNET_ID` | ARM resource ID of the agent subnet (empty unless BYO VNet). |
+| `AZURE_PE_SUBNET_ID` | ARM resource ID of the private endpoint subnet (empty unless BYO VNet). |
+
+#### Extension-managed Bicep inputs
+
+These variables are set automatically by `azd ai agent init` (or related commands) and consumed as inputs by the starter Bicep template. They are not intended for manual editing.
+
+| Variable | Description |
+| --- | --- |
+| `USE_EXISTING_FOUNDRY_PROJECT` | If `true`, the Bicep template binds to the project identified by `FOUNDRY_PROJECT_ARM_ID` instead of provisioning a new one. Defaults to `false`. |
+| `USE_EXISTING_FOUNDRY_ACCOUNT` | If `true`, the Bicep template binds to an existing Foundry account identified by `FOUNDRY_ACCOUNT_RESOURCE_ID`. Defaults to `false`. |
+| `FOUNDRY_ACCOUNT_RESOURCE_ID` | ARM resource ID of an existing Foundry account to bind to when `USE_EXISTING_FOUNDRY_ACCOUNT=true`. |
+| `FOUNDRY_PROJECT_DEPLOYMENTS` | JSON-encoded list of model deployments to provision, derived from the agent manifest. Defaults to `[]`. |
+| `FOUNDRY_PROJECT_CONNECTIONS` | JSON-encoded list of connection resources to provision, derived from `azure.yaml`. Defaults to `[]`. |
+| `FOUNDRY_PROJECT_CONNECTION_CREDENTIALS` | JSON-encoded credential map for the connections in `FOUNDRY_PROJECT_CONNECTIONS`. |
+| `FOUNDRY_PROJECT_DEPENDENT_RESOURCES` | JSON-encoded list of dependent Azure resources detected from the agent manifest. |
+| `FOUNDRY_PROJECT_TOOL_CONNECTIONS` | JSON-encoded list of tool-to-connection mappings extracted from the agent manifest. |
+| `AZD_AGENT_SKIP_ACR` | If `true`, signals the Bicep template to skip Azure Container Registry creation. Set automatically by `azd ai agent init` for code-deploy scenarios where no container image is built. Defaults to `false`. |
+| `SKIP_ACCOUNT_CAPABILITY_HOST` | If `true`, skips creating the account-level capability host. Defaults to `false`. |
+| `ENABLE_CAPABILITY_HOST` | If `true` (default), provisions the project-level capability host required for hosted agents. |
+| `ENABLE_MONITORING` | If `true` (default), provisions Application Insights and Log Analytics. |
+| `ENABLE_HOSTED_AGENTS` | Marker set to `true` by the extension once a hosted agent has been provisioned in the current environment. Used by `azd ai agent listen` to detect feature availability. |
+
+#### Bring-your-own infrastructure (Bicep inputs)
+
+These variables are not set automatically; provide them in the azd environment to opt into advanced topologies. All have safe defaults.
+
+| Variable | Description |
+| --- | --- |
+| `FOUNDRY_NETWORK_MODE` | Network mode: `none` (default), `managedVnet`, or `byoVnet`. Also echoed as a provisioning output. |
+| `FOUNDRY_VNET_RESOURCE_ID` | ARM resource ID of an existing VNet to use when `FOUNDRY_NETWORK_MODE=byoVnet`. |
+| `FOUNDRY_VNET_NAME` | VNet name when creating a new VNet. Defaults to `vnet-${AZURE_ENV_NAME}`. |
+| `FOUNDRY_VNET_ADDRESS_PREFIX` | Address prefix for a newly created VNet. |
+| `FOUNDRY_AGENT_SUBNET_NAME` | Agent subnet name. Defaults to `agent-subnet`. |
+| `FOUNDRY_AGENT_SUBNET_PREFIX` | Agent subnet address prefix. |
+| `FOUNDRY_PE_SUBNET_NAME` | Private endpoint subnet name. Defaults to `pe-subnet`. |
+| `FOUNDRY_PE_SUBNET_PREFIX` | Private endpoint subnet address prefix. |
+| `FOUNDRY_CLIENT_IP_ALLOW_LIST` | JSON array of client IPs allowed to access the Foundry account. Defaults to `[]`. |
+| `FOUNDRY_DISABLE_PUBLIC_NETWORK_ACCESS` | If `true`, disables public network access to the Foundry account. Defaults to `false`. |
+| `FOUNDRY_EXISTING_DNS_ZONES` | JSON object mapping DNS zone names to existing ARM resource IDs to reuse instead of creating new private DNS zones. Defaults to `{}`. |
+| `FOUNDRY_DNS_ZONES_SUBSCRIPTION_ID` | Subscription ID where existing private DNS zones live, if different from the deployment subscription. |
+| `FOUNDRY_PROJECT_STORAGE_RESOURCE_ID` | ARM resource ID of an existing Storage account to reuse for Standard agents. |
+| `FOUNDRY_PROJECT_AISEARCH_RESOURCE_ID` | ARM resource ID of an existing Azure AI Search service to reuse for Standard agents. |
+| `FOUNDRY_PROJECT_COSMOSDB_RESOURCE_ID` | ARM resource ID of an existing Cosmos DB account to reuse for Standard agents. |
+
+#### Per-service and host-environment variables
+
+| Variable | Description |
+| --- | --- |
+| `AGENT_{SVC}_NAME` | The deployed agent name for service `{SVC}`. Set by `azd deploy` and `azd ai agent listen`. `{SVC}` is the uppercase service name with non-alphanumeric characters replaced by underscores. Translated to `FOUNDRY_AGENT_NAME` when running the agent locally via `azd ai agent run`. |
+| `AGENT_{SVC}_VERSION` | The deployed agent version for service `{SVC}`. Translated to `FOUNDRY_AGENT_VERSION` when running locally. |
+| `AGENT_{SVC}_ENDPOINT` | Full endpoint URL for the deployed agent, including name and version path segments. |
+| `AGENT_{SVC}_{PROTOCOL}_ENDPOINT` | Per-protocol endpoint URL for the deployed agent (for example, `AGENT_MY_SVC_RESPONSES_ENDPOINT`, `AGENT_MY_SVC_INVOCATIONS_ENDPOINT`). |
+| `AGENT_DEFINITION_PATH` | Host-environment override for the agent definition file path. Read by `azd ai agent deploy` when set. |
+| `AZD_AGENT_SKIP_ROLE_ASSIGNMENTS` | If `true`, skips developer and agent-identity RBAC role assignments during deploy. Read from both the azd environment and the host shell environment. Useful when the deploying identity lacks role-assignment permissions and roles are assigned out-of-band. |
+| `AZD_EXT_DEBUG` | If `true`, enables verbose debug logging from the extension. Read from the host environment only. |
 
 ## UI Prompt Integration
 

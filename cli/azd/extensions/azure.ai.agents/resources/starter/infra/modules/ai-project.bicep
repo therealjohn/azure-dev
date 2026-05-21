@@ -7,10 +7,10 @@ param tags object = {}
 param location string
 
 @description('Name of the AI Foundry project')
-param aiFoundryProjectName string
+param foundryProjectName string
 
 @description('Name of the AI Foundry account that owns this project. The account must be in the same resource group as this deployment.')
-param aiAccountName string
+param foundryAccountName string
 
 @description('Connections to create from azure.yaml')
 param connections array = []
@@ -26,7 +26,7 @@ param principalId string
 param principalType string
 
 @description('Use an existing Foundry project instead of creating one')
-param useExistingAiProject bool = false
+param useExistingFoundryProject bool = false
 
 @description('Provision Application Insights + Log Analytics and connect them to the project. Defaults true. Only affects NEW projects; existing projects keep their existing monitoring wiring.')
 param enableMonitoring bool = true
@@ -53,11 +53,11 @@ var isStandard = networkMode == 'byo-vnet-standard'
 // Account references (same RG)
 // ─────────────────────────────────────────────────────────────────────
 
-resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: aiAccountName
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+  name: foundryAccountName
 
-  resource existingProject 'projects' existing = if (useExistingAiProject) {
-    name: aiFoundryProjectName
+  resource existingProject 'projects' existing = if (useExistingFoundryProject) {
+    name: foundryProjectName
   }
 }
 
@@ -65,14 +65,14 @@ resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = 
 // Project (new)
 // ─────────────────────────────────────────────────────────────────────
 
-resource newProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = if (!useExistingAiProject) {
-  parent: aiAccount
-  name: aiFoundryProjectName
+resource newProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = if (!useExistingFoundryProject) {
+  parent: foundryAccount
+  name: foundryProjectName
   location: location
   identity: { type: 'SystemAssigned' }
   properties: {
-    description: '${aiFoundryProjectName} Project'
-    displayName: '${aiFoundryProjectName}Project'
+    description: '${foundryProjectName} Project'
+    displayName: '${foundryProjectName}Project'
   }
 }
 
@@ -84,7 +84,7 @@ resource newProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-pr
 // Monitoring (new project only; gated by enableMonitoring)
 // ─────────────────────────────────────────────────────────────────────
 
-var provisionMonitoring = !useExistingAiProject && enableMonitoring
+var provisionMonitoring = !useExistingFoundryProject && enableMonitoring
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-12-01-preview' = if (provisionMonitoring) {
   name: 'logs-${resourceToken}'
@@ -152,10 +152,10 @@ resource logAnalyticsReaderRole 'Microsoft.Authorization/roleAssignments@2022-04
 
 var aiUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 
-resource newProjectRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useExistingAiProject) {
+resource newProjectRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useExistingFoundryProject) {
   #disable-next-line BCP318
   scope: newProject
-  name: guid(subscription().id, resourceGroup().id, principalId, aiUserRoleId, aiFoundryProjectName)
+  name: guid(subscription().id, resourceGroup().id, principalId, aiUserRoleId, foundryProjectName)
   properties: {
     principalId: principalId
     principalType: principalType
@@ -175,20 +175,20 @@ resource newProjectRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
 // Connections from azure.yaml (works for both new and existing)
 // ─────────────────────────────────────────────────────────────────────
 
-module aiConnections './connection.bicep' = [for (conn, i) in connections: {
+module foundryConnections './connection.bicep' = [for (conn, i) in connections: {
   name: 'connection-${conn.name}'
   params: {
-    aiAccountName: aiAccountName
-    aiProjectName: aiFoundryProjectName
+    foundryAccountName: foundryAccountName
+    foundryProjectName: foundryProjectName
     connectionConfig: conn
     credentials: connectionCredentials[?conn.name] ?? {}
   }
   // Mutually exclusive: exactly one of newProject / existingProject is deployed
-  // per useExistingAiProject. Conditional resources that are NOT deployed are
+  // per useExistingFoundryProject. Conditional resources that are NOT deployed are
   // safely no-op in dependsOn arrays at runtime (ARM ignores them).
   dependsOn: [
     newProject
-    aiAccount::existingProject
+    foundryAccount::existingProject
   ]
 }]
 
@@ -196,33 +196,33 @@ module aiConnections './connection.bicep' = [for (conn, i) in connections: {
 // Outputs (existing-vs-new short-circuit ternary; BCP318-suppressed)
 // ─────────────────────────────────────────────────────────────────────
 
-output projectName string = aiFoundryProjectName
+output projectName string = foundryProjectName
 #disable-next-line BCP318
-output projectId string = useExistingAiProject ? aiAccount::existingProject.id : newProject.id
+output projectId string = useExistingFoundryProject ? foundryAccount::existingProject.id : newProject.id
 #disable-next-line BCP318
-output projectPrincipalId string = useExistingAiProject ? aiAccount::existingProject.identity.principalId : newProject.identity.principalId
+output projectPrincipalId string = useExistingFoundryProject ? foundryAccount::existingProject.identity.principalId : newProject.identity.principalId
 #disable-next-line BCP318
-output projectEndpoint string = useExistingAiProject ? aiAccount::existingProject.properties.endpoints['AI Foundry API'] : newProject.properties.endpoints['AI Foundry API']
+output projectEndpoint string = useExistingFoundryProject ? foundryAccount::existingProject.properties.endpoints['AI Foundry API'] : newProject.properties.endpoints['AI Foundry API']
 // Monitoring outputs:
-//   - useExistingAiProject: pass through caller-supplied existing values
+//   - useExistingFoundryProject: pass through caller-supplied existing values
 //   - new project + monitoring disabled: empty strings
 //   - new project + monitoring enabled: pulled from the deployed resources
 // Force-unwrap (`!`) on appInsights properties is safe: only reached when
 // provisionMonitoring is true, which is the condition that creates appInsights.
-output appInsightsConnectionString string = useExistingAiProject
+output appInsightsConnectionString string = useExistingFoundryProject
   ? existingAppInsightsConnectionString
   : (provisionMonitoring ? appInsights!.properties.ConnectionString : '')
-output appInsightsResourceId string = useExistingAiProject
+output appInsightsResourceId string = useExistingFoundryProject
   ? existingAppInsightsResourceId
   : (provisionMonitoring ? appInsights!.id : '')
 output connectionIds array = [for (conn, i) in connections: {
-  name: aiConnections[i].outputs.connectionName
-  id: aiConnections[i].outputs.connectionId
+  name: foundryConnections[i].outputs.connectionName
+  id: foundryConnections[i].outputs.connectionId
 }]
 // Workspace GUID derived from internalId — used by Standard post-cap-host RBAC modules.
 // project.properties.internalId is a string GUID per sample 15. The Bicep type defs
 // don't expose this property (BCP053) and the `existing` project reference may be
 // null at compile time (BCP318); both are runtime-safe because the access is gated
-// by `isStandard` and `useExistingAiProject` matching the deployed branch.
+// by `isStandard` and `useExistingFoundryProject` matching the deployed branch.
 #disable-next-line BCP318 BCP053
-output projectWorkspaceId string = isStandard ? (useExistingAiProject ? aiAccount::existingProject!.properties.internalId : newProject!.properties.internalId) : ''
+output projectWorkspaceId string = isStandard ? (useExistingFoundryProject ? foundryAccount::existingProject!.properties.internalId : newProject!.properties.internalId) : ''

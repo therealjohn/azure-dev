@@ -1750,7 +1750,7 @@ func (a *InitAction) configureModelChoice(
 	if a.flags.projectResourceId == "" {
 		if existing, err := a.azdClient.Environment().GetValue(ctx, &azdext.GetEnvRequest{
 			EnvName: a.environment.Name,
-			Key:     "AZURE_AI_PROJECT_ID",
+			Key:     "FOUNDRY_PROJECT_ARM_ID",
 		}); err == nil && existing.Value != "" {
 			a.flags.projectResourceId = existing.Value
 			log.Printf("Reusing existing Foundry project from environment: %s", existing.Value)
@@ -1822,7 +1822,7 @@ func (a *InitAction) configureModelChoice(
 
 			// Signal Bicep to skip project/role/connection provisioning for this existing project
 			if err := setEnvValue(
-				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true",
+				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_FOUNDRY_PROJECT", "true",
 			); err != nil {
 				return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
 			}
@@ -1888,7 +1888,7 @@ func (a *InitAction) configureModelChoice(
 						"No existing Foundry project was selected. Falling back to creating new resources.",
 					)
 					if err := setEnvValue(
-						ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "false",
+						ctx, a.azdClient, a.environment.Name, "USE_EXISTING_FOUNDRY_PROJECT", "false",
 					); err != nil {
 						return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
 					}
@@ -1903,7 +1903,7 @@ func (a *InitAction) configureModelChoice(
 				} else {
 					// Signal Bicep to skip project/role/connection provisioning for this existing project
 					if err := setEnvValue(
-						ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true",
+						ctx, a.azdClient, a.environment.Name, "USE_EXISTING_FOUNDRY_PROJECT", "true",
 					); err != nil {
 						return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
 					}
@@ -1925,7 +1925,7 @@ func (a *InitAction) configureModelChoice(
 
 				// Creating new resources — clear any stale existing-project flag
 				if err := setEnvValue(
-					ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "false",
+					ctx, a.azdClient, a.environment.Name, "USE_EXISTING_FOUNDRY_PROJECT", "false",
 				); err != nil {
 					return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
 				}
@@ -1952,6 +1952,7 @@ func (a *InitAction) configureModelChoice(
 		}
 		a.credential = newCred
 
+		// Select a Foundry project (sets FOUNDRY_PROJECT_ARM_ID, ACR, AppInsights env vars)
 		selectedProject, err := selectFoundryProject(
 			ctx, a.azdClient, a.credential, a.azureContext, a.environment.Name,
 			a.azureContext.Scope.SubscriptionId, a.flags.projectResourceId,
@@ -1963,7 +1964,7 @@ func (a *InitAction) configureModelChoice(
 
 		if selectedProject != nil {
 			if err := setEnvValue(
-				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true",
+				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_FOUNDRY_PROJECT", "true",
 			); err != nil {
 				return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
 			}
@@ -1987,7 +1988,7 @@ func (a *InitAction) configureModelChoice(
 
 		// Creating new resources — clear any stale existing-project flag
 		if err := setEnvValue(
-			ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "false",
+			ctx, a.azdClient, a.environment.Name, "USE_EXISTING_FOUNDRY_PROJECT", "false",
 		); err != nil {
 			return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
 		}
@@ -2085,7 +2086,7 @@ func (a *InitAction) configureModelChoice(
 		}
 	}
 
-	// Now process models — getModelDeploymentDetails will branch based on AZURE_AI_PROJECT_ID
+	// Now process models — getModelDeploymentDetails will branch based on FOUNDRY_PROJECT_ARM_ID
 	agentManifest, deploymentDetails, err := a.ProcessModels(ctx, agentManifest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process model resources: %w", err)

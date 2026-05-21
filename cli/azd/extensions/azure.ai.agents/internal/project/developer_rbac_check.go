@@ -122,7 +122,7 @@ func CheckDeveloperRBAC(ctx context.Context, azdClient *azdext.AzdClient) error 
 
 	projectResp, err := envClient.GetValue(ctx, &azdext.GetEnvRequest{
 		EnvName: envName,
-		Key:     "AZURE_AI_PROJECT_ID",
+		Key:     "FOUNDRY_PROJECT_ARM_ID",
 	})
 	if err != nil || projectResp.Value == "" {
 		// Can't check RBAC without the project ID; deployment will fail later with a clearer message.

@@ -7,10 +7,10 @@ param location string = resourceGroup().location
 param tags object = {}
 
 @description('AI Services account name')
-param aiAccountName string
+param foundryAccountName string
 
 @description('AI project name')
-param aiProjectName string
+param foundryProjectName string
 
 @description('Managed identity principal ID of the AI project')
 param projectPrincipalId string
@@ -94,8 +94,8 @@ module storageRbac './storage-rbac.bicep' = {
 module storageConnection './connection.bicep' = {
   name: 'storage-connection'
   params: {
-    aiAccountName: aiAccountName
-    aiProjectName: aiProjectName
+    foundryAccountName: foundryAccountName
+    foundryProjectName: foundryProjectName
     connectionConfig: {
       name: connectionName
       category: 'AzureStorageAccount'

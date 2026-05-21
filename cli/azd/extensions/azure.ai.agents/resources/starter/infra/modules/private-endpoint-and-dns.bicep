@@ -15,11 +15,11 @@ targetScope = 'resourceGroup'
   "create a new zone in the current RG".
 */
 
-@description('Name of the AI Foundry (Cognitive Services) account in the current resource group scope. The PE is created in this RG; the account itself can live elsewhere if you pass aiAccountId.')
-param aiAccountName string
+@description('Name of the AI Foundry (Cognitive Services) account in the current resource group scope. The PE is created in this RG; the account itself can live elsewhere if you pass foundryAccountId.')
+param foundryAccountName string
 
 @description('Optional full ARM resource ID of the AI Foundry account. Use when the account lives in a different RG/subscription from the PE. When empty, the account is looked up by name in the current RG.')
-param aiAccountId string = ''
+param foundryAccountId string = ''
 
 @description('Name of the VNet containing the PE subnet.')
 param vnetName string
@@ -68,20 +68,20 @@ resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existin
   name: peSubnetName
 }
 
-resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
-  name: aiAccountName
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+  name: foundryAccountName
 }
 
-resource aiAccountPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
-  name: '${aiAccountName}-pe-${suffix}'
+resource foundryAccountPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
+  name: '${foundryAccountName}-pe-${suffix}'
   location: resourceGroup().location
   properties: {
     subnet: { id: peSubnet.id }
     privateLinkServiceConnections: [
       {
-        name: '${aiAccountName}-pls-${suffix}'
+        name: '${foundryAccountName}-pls-${suffix}'
         properties: {
-          privateLinkServiceId: empty(aiAccountId) ? aiAccount.id : aiAccountId
+          privateLinkServiceId: empty(foundryAccountId) ? foundryAccount.id : foundryAccountId
           groupIds: ['account']
         }
       }
@@ -155,9 +155,9 @@ resource newCognitiveLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
   }
 }
 
-resource aiAccountDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
-  parent: aiAccountPrivateEndpoint
-  name: '${aiAccountName}-dns-group'
+resource foundryAccountDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
+  parent: foundryAccountPrivateEndpoint
+  name: '${foundryAccountName}-dns-group'
   properties: {
     privateDnsZoneConfigs: [
       { name: 'aiservices-config', properties: { privateDnsZoneId: aiServicesZoneId } }
@@ -172,4 +172,4 @@ resource aiAccountDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZon
   ]
 }
 
-output privateEndpointId string = aiAccountPrivateEndpoint.id
+output privateEndpointId string = foundryAccountPrivateEndpoint.id

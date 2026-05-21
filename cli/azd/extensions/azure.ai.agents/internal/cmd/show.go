@@ -232,7 +232,7 @@ func resolveNextStepFromStatus(serviceName, status string) []nextstep.Suggestion
 	return nextstep.ResolveAfterShow(state, serviceName)
 }
 
-// resolvePlaygroundURL reads AZURE_AI_PROJECT_ID from the azd environment
+// resolvePlaygroundURL reads FOUNDRY_PROJECT_ARM_ID from the azd environment
 // and constructs the Foundry portal playground URL. Returns empty string on failure.
 func (a *ShowAction) resolvePlaygroundURL(ctx context.Context) string {
 	if a.azdClient == nil || a.envName == "" {
@@ -241,7 +241,7 @@ func (a *ShowAction) resolvePlaygroundURL(ctx context.Context) string {
 
 	v, err := a.azdClient.Environment().GetValue(ctx, &azdext.GetEnvRequest{
 		EnvName: a.envName,
-		Key:     "AZURE_AI_PROJECT_ID",
+		Key:     "FOUNDRY_PROJECT_ARM_ID",
 	})
 	if err != nil {
 		return ""

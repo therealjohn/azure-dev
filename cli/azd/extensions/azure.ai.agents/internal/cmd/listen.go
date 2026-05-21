@@ -468,7 +468,7 @@ func deploymentEnvUpdate(ctx context.Context, deployments []project.Deployment, 
 	escapedJsonString := strings.ReplaceAll(jsonString, "\\", "\\\\")
 	escapedJsonString = strings.ReplaceAll(escapedJsonString, "\"", "\\\"")
 
-	return setEnvVar(ctx, azdClient, envName, "AI_PROJECT_DEPLOYMENTS", escapedJsonString)
+	return setEnvVar(ctx, azdClient, envName, "FOUNDRY_PROJECT_DEPLOYMENTS", escapedJsonString)
 }
 
 func resourcesEnvUpdate(ctx context.Context, resources []project.Resource, azdClient *azdext.AzdClient, envName string) error {
@@ -482,7 +482,7 @@ func resourcesEnvUpdate(ctx context.Context, resources []project.Resource, azdCl
 	escapedJsonString := strings.ReplaceAll(jsonString, "\\", "\\\\")
 	escapedJsonString = strings.ReplaceAll(escapedJsonString, "\"", "\\\"")
 
-	return setEnvVar(ctx, azdClient, envName, "AI_PROJECT_DEPENDENT_RESOURCES", escapedJsonString)
+	return setEnvVar(ctx, azdClient, envName, "FOUNDRY_PROJECT_DEPENDENT_RESOURCES", escapedJsonString)
 }
 
 func connectionsEnvUpdate(
@@ -500,7 +500,7 @@ func connectionsEnvUpdate(
 		stripped[i].Credentials = nil
 	}
 
-	if err := marshalAndSetEnvVar(ctx, azdClient, envName, "AI_PROJECT_CONNECTIONS", stripped); err != nil {
+	if err := marshalAndSetEnvVar(ctx, azdClient, envName, "FOUNDRY_PROJECT_CONNECTIONS", stripped); err != nil {
 		return err
 	}
 
@@ -508,7 +508,7 @@ func connectionsEnvUpdate(
 }
 
 // connectionCredentialsEnvUpdate builds a dictionary of connection name → credentials
-// and serializes it to AI_PROJECT_CONNECTION_CREDENTIALS. Credential values may contain
+// and serializes it to FOUNDRY_PROJECT_CONNECTION_CREDENTIALS. Credential values may contain
 // ${VAR} env var references (from externalization during init); these are resolved to
 // their actual values before serialization so Bicep receives real secrets.
 func connectionCredentialsEnvUpdate(
@@ -531,7 +531,7 @@ func connectionCredentialsEnvUpdate(
 		credMap[connName] = resolveMapValues(creds, azdEnv)
 	}
 
-	return marshalAndSetEnvVar(ctx, azdClient, envName, "AI_PROJECT_CONNECTION_CREDENTIALS", credMap)
+	return marshalAndSetEnvVar(ctx, azdClient, envName, "FOUNDRY_PROJECT_CONNECTION_CREDENTIALS", credMap)
 }
 
 // buildConnectionCredentials returns a map of connection name → credentials object
@@ -547,14 +547,14 @@ func buildConnectionCredentials(connections []project.Connection) map[string]map
 	return result
 }
 
-// toolConnectionsEnvUpdate serializes tool connections to AI_PROJECT_TOOL_CONNECTIONS env var.
+// toolConnectionsEnvUpdate serializes tool connections to FOUNDRY_PROJECT_TOOL_CONNECTIONS env var.
 func toolConnectionsEnvUpdate(
 	ctx context.Context,
 	connections []project.ToolConnection,
 	azdClient *azdext.AzdClient,
 	envName string,
 ) error {
-	return marshalAndSetEnvVar(ctx, azdClient, envName, "AI_PROJECT_TOOL_CONNECTIONS", connections)
+	return marshalAndSetEnvVar(ctx, azdClient, envName, "FOUNDRY_PROJECT_TOOL_CONNECTIONS", connections)
 }
 
 // marshalAndSetEnvVar serializes a value to JSON, escapes it for safe storage
@@ -722,7 +722,7 @@ func provisionToolboxes(
 	}
 
 	// Build connection ID lookup from bicep outputs (name → ARM resource ID)
-	connIDMap, err := parseConnectionIDs(azdEnv["AI_PROJECT_CONNECTION_IDS_JSON"])
+	connIDMap, err := parseConnectionIDs(azdEnv["FOUNDRY_PROJECT_CONNECTION_IDS_JSON"])
 	if err != nil {
 		return fmt.Errorf("loading connection IDs: %w", err)
 	}
@@ -870,7 +870,7 @@ func toolboxConnectionsByName(config *project.ServiceTargetAgentConfig) map[stri
 	return connByName
 }
 
-// parseConnectionIDs parses the AI_PROJECT_CONNECTION_IDS_JSON env var
+// parseConnectionIDs parses the FOUNDRY_PROJECT_CONNECTION_IDS_JSON env var
 // (a JSON array of {name, id} objects) into a map of name → ARM resource ID.
 func parseConnectionIDs(jsonStr string) (map[string]string, error) {
 	result := map[string]string{}
@@ -883,7 +883,7 @@ func parseConnectionIDs(jsonStr string) (map[string]string, error) {
 		ID   string `json:"id"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &entries); err != nil {
-		return nil, fmt.Errorf("failed to parse AI_PROJECT_CONNECTION_IDS_JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse FOUNDRY_PROJECT_CONNECTION_IDS_JSON: %w", err)
 	}
 
 	for _, e := range entries {
