@@ -31,6 +31,7 @@ import (
 	"azureaiagent/internal/pkg/agents/agent_yaml"
 	"azureaiagent/internal/pkg/azdignore"
 	"azureaiagent/internal/pkg/envkey"
+	"azureaiagent/internal/pkg/scaffold"
 	"azureaiagent/internal/project"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -1258,9 +1259,8 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 				default:
 					// initModeFromCode - use existing code in current directory
 					action := &InitFromCodeAction{
-						azdClient:  azdClient,
-						flags:      flags,
-						httpClient: httpClient,
+						azdClient: azdClient,
+						flags:     flags,
 					}
 
 					if err := action.Run(ctx); err != nil {
@@ -1490,7 +1490,8 @@ func ensureProject(
 	if err != nil {
 		fmt.Println("Let's get your project initialized.")
 
-		// Environment creation is handled separately in ensureEnvironment
+		// Derive the environment name now so it's available for both the
+		// scaffold step (UX/messaging) and createNewEnvironment below.
 		envName := flags.env
 		if envName == "" {
 			// Derive environment name from target folder
@@ -1508,48 +1509,26 @@ func ensureProject(
 			envName = base + "-dev"
 		}
 
-		initArgs := []string{
-			"init", "-t", "Azure-Samples/azd-ai-starter-basic", targetDir,
-			"--environment", envName,
-		}
-
-		// We don't have a project yet
-		// Dispatch a workflow to init the project
-		workflow := &azdext.Workflow{
-			Name: "init",
-			Steps: []*azdext.WorkflowStep{
-				{Command: &azdext.WorkflowCommand{Args: initArgs}},
-			},
-		}
-
-		_, err := azdClient.Workflow().Run(ctx, &azdext.RunWorkflowRequest{
-			Workflow: workflow,
-		})
-
-		if err != nil {
+		// 1. Write the embedded `azd-ai-starter-basic` payload (azure.yaml +
+		// infra/) into the target directory. The extension owns the
+		// scaffold now, so no GitHub fetch is required.
+		if err := scaffold.ScaffoldStarter(ctx, azdClient, scaffold.StarterOptions{
+			TargetDir: targetDir,
+			NoPrompt:  flags.noPrompt,
+		}); err != nil {
 			if exterrors.IsCancellation(err) {
 				return nil, exterrors.Cancelled("project initialization was cancelled")
 			}
 			return nil, exterrors.Dependency(
-				exterrors.CodeProjectInitFailed,
-				fmt.Sprintf("failed to initialize project: %s", err),
+				exterrors.CodeScaffoldTemplateFailed,
+				fmt.Sprintf("failed to scaffold starter template: %s", err),
 				"",
 			)
 		}
 
-		// Best-effort: generate a salt so uniqueString()-based resource names
-		// differ across project recreations. If anything fails the Bicep
-		// templates fall back to the original deterministic hash.
-		salt := ensureResourceTokenSalt(ctx, azdClient, envName)
-
-		// Best-effort: write a salted AZURE_RESOURCE_GROUP so recreated
-		// projects get a fresh RG (avoiding collisions with leftovers from
-		// a prior teardown). Skipped when salt generation failed or when
-		// AZURE_RESOURCE_GROUP is already set.
-		ensureResourceGroupName(ctx, azdClient, envName, salt)
-
 		// Sync the extension process into the new project directory so that
-		// subsequent local file operations see the scaffolded project.
+		// subsequent env creation and local file operations see the
+		// scaffolded project.
 		if targetDir != "." {
 			if chdirErr := os.Chdir(targetDir); chdirErr != nil {
 				return nil, fmt.Errorf(
@@ -1558,6 +1537,27 @@ func ensureProject(
 				)
 			}
 		}
+
+		// 2. Create the env via the same `azd env new` helper the other
+		// init paths use. We intentionally avoid dispatching `azd init`
+		// here: --from-code rejects the positional `.` and would re-run
+		// app-scaffolding that could overwrite the just-written
+		// azure.yaml, while plain `azd init` would re-trigger extension
+		// initialization while this same extension is mid-execution.
+		if _, envErr := createNewEnvironment(ctx, azdClient, envName); envErr != nil {
+			return nil, envErr
+		}
+
+		// 3. Best-effort: generate a salt so uniqueString()-based resource names
+		// differ across project recreations. If anything fails the Bicep
+		// templates fall back to the original deterministic hash.
+		salt := ensureResourceTokenSalt(ctx, azdClient, envName)
+
+		// 4. Best-effort: write a salted AZURE_RESOURCE_GROUP so recreated
+		// projects get a fresh RG (avoiding collisions with leftovers from
+		// a prior teardown). Skipped when salt generation failed or when
+		// AZURE_RESOURCE_GROUP is already set.
+		ensureResourceGroupName(ctx, azdClient, envName, salt)
 
 		projectResponse, err = azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 		if err != nil {
@@ -1581,8 +1581,8 @@ func ensureProject(
 		if _, statErr := os.Stat(infraDir); os.IsNotExist(statErr) {
 			fmt.Printf("%s", output.WithWarningFormat(
 				"No infra/ directory found in the project. If you need Azure infrastructure "+
-					"for deployment, run 'azd init -t Azure-Samples/azd-ai-starter-basic .' in an empty "+
-					"directory first, then re-run this command from there.\n",
+					"for deployment, run 'azd ai agent init' in an empty directory first, then "+
+					"re-run this command from there.\n",
 			))
 		}
 	}

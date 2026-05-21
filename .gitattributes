@@ -7,4 +7,10 @@ cli/azd/**/*.ts text eol=lf
 *.txt text eol=lf
 *.sh text eol=lf
 
+# Embedded starter scaffold inside the azure.ai.agents extension. These bytes
+# are baked into the binary via //go:embed and written to user workspaces at
+# `azd ai agent init` time, so we keep them in LF regardless of contributor
+# platform to match what GitHub raw used to serve.
+cli/azd/extensions/azure.ai.agents/resources/starter/** text eol=lf
+
 .github/workflows/*.lock.yml linguist-generated=true merge=ours

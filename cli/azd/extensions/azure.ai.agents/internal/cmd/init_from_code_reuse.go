@@ -119,7 +119,6 @@ func runReuseDefinition(
 		flags:         flags,
 		projectConfig: projectConfig,
 		environment:   env,
-		httpClient:    httpClient,
 	}
 
 	isCodeDeploy := def.CodeConfiguration != nil
