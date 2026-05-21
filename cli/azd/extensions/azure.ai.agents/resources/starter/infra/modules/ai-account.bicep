@@ -120,7 +120,7 @@ var effectiveNetworkInjections = isManaged
 // ─────────────────────────────────────────────────────────────────────
 
 #disable-next-line BCP036
-resource newAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = if (!useExistingAccount) {
+resource newAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' = if (!useExistingAccount) {
   name: resolvedNewAccountName
   location: location
   tags: tags
@@ -148,7 +148,7 @@ resource newAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = if (!use
 // Existing account (cross-RG / cross-sub safe)
 // ─────────────────────────────────────────────────────────────────────
 
-resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (useExistingAccount) {
+resource existingAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = if (useExistingAccount) {
   name: resolvedExistingAccountName
 }
 
@@ -159,7 +159,7 @@ resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' exist
 // useExistingAccount so the loop is skipped (and existingAccount unread) when
 // we're in the new-account branch.
 @batchSize(1)
-resource existingAccountDeployments 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = [for dep in deployments: if (useExistingAccount) {
+resource existingAccountDeployments 'Microsoft.CognitiveServices/accounts/deployments@2026-03-01' = [for dep in deployments: if (useExistingAccount) {
   parent: existingAccount
   name: dep.name
   properties: { model: dep.model }

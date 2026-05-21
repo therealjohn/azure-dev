@@ -12,7 +12,7 @@ param principalId string = ''
 @description('Developer principal type.')
 param principalType string = 'User'
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+resource storageAccount 'Microsoft.Storage/storageAccounts@2025-08-01' existing = {
   name: storageAccountName
 }
 

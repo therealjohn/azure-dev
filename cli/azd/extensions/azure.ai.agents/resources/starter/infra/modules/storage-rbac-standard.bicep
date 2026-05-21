@@ -20,7 +20,7 @@ param projectPrincipalId string
 @description('Project workspace GUID derived from project.properties.internalId.')
 param workspaceId string
 
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+resource storage 'Microsoft.Storage/storageAccounts@2025-08-01' existing = {
   name: storageAccountName
 }
 

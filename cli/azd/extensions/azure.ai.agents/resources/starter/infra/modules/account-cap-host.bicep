@@ -19,7 +19,7 @@ var isByoVnet = startsWith(networkMode, 'byo-vnet')
 var isStandard = networkMode == 'byo-vnet-standard'
 var isManaged = networkMode == 'managed'
 
-resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+resource account 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = {
   name: accountName
 }
 

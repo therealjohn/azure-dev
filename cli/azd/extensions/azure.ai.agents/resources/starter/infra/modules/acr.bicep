@@ -28,38 +28,33 @@ var resourceToken = uniqueString(subscription().id, resourceGroup().id, location
 var registryName = 'cr${resourceToken}'
 var connectionName = 'acr-${resourceToken}'
 
-resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: registryName
-  location: location
-  tags: tags
-  sku: { name: 'Basic' }
-  properties: {
-    adminUserEnabled: false
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
-// Developer: build & push images via ACR Tasks (skipped for existing projects)
-resource developerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useExistingFoundryProject) {
-  scope: containerRegistry
-  name: guid(containerRegistry.id, principalId, 'fb382eab-e894-4461-af04-94435c366c3f')
-  properties: {
+// Role assignments are skipped for existing projects to avoid RoleAssignmentExists
+// conflicts on re-deploys. The ACR name is deterministic per (sub, rg, location),
+// so prior deployments may have created the assignments under a different guid().
+var acrRoleAssignments = useExistingFoundryProject ? [] : [
+  {
+    // Container Registry Tasks Contributor -- developer: build & push images via ACR Tasks
     principalId: principalId
     principalType: principalType
-    // Container Registry Tasks Contributor
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'fb382eab-e894-4461-af04-94435c366c3f')
+    roleDefinitionIdOrName: 'fb382eab-e894-4461-af04-94435c366c3f'
   }
-}
-
-// Project managed identity: pull images for hosted agents (skipped for existing projects)
-resource projectPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useExistingFoundryProject) {
-  scope: containerRegistry
-  name: guid(containerRegistry.id, projectPrincipalId, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-  properties: {
+  {
+    // AcrPull -- project managed identity: pull images for hosted agents
     principalId: projectPrincipalId
     principalType: 'ServicePrincipal'
-    // AcrPull
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    roleDefinitionIdOrName: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+  }
+]
+
+module containerRegistry 'br/public:avm/res/container-registry/registry:0.1.1' = {
+  name: 'acr-${registryName}'
+  params: {
+    name: registryName
+    location: location
+    tags: tags
+    acrSku: 'Basic'
+    acrAdminUserEnabled: false
+    roleAssignments: acrRoleAssignments
   }
 }
 
@@ -72,18 +67,18 @@ module acrConnection './connection.bicep' = {
     connectionConfig: {
       name: connectionName
       category: 'ContainerRegistry'
-      target: containerRegistry.properties.loginServer
+      target: containerRegistry.outputs.loginServer
       authType: 'ManagedIdentity'
       isSharedToAll: true
-      metadata: { ResourceId: containerRegistry.id }
+      metadata: { ResourceId: containerRegistry.outputs.resourceId }
     }
     credentials: {
       clientId: projectPrincipalId
-      resourceId: containerRegistry.id
+      resourceId: containerRegistry.outputs.resourceId
     }
   }
 }
 
-output registryName string = containerRegistry.name
-output loginServer string = containerRegistry.properties.loginServer
+output registryName string = containerRegistry.outputs.name
+output loginServer string = containerRegistry.outputs.loginServer
 output connectionName string = acrConnection.outputs.connectionName

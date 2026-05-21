@@ -9,11 +9,11 @@ param searchServiceName string
 @description('Name of the blob container created for the search indexer.')
 param knowledgeContainerName string = 'knowledge'
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+resource storageAccount 'Microsoft.Storage/storageAccounts@2025-08-01' existing = {
   name: storageAccountName
 }
 
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2025-08-01' existing = {
   parent: storageAccount
   name: 'default'
 }
@@ -22,7 +22,7 @@ resource searchService 'Microsoft.Search/searchServices@2024-06-01-preview' exis
   name: searchServiceName
 }
 
-resource knowledgeContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+resource knowledgeContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2025-08-01' = {
   parent: blobService
   name: knowledgeContainerName
   properties: { publicAccess: 'None' }

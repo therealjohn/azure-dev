@@ -38,7 +38,7 @@ var existingSubId = hasExisting ? existingParts[2] : subscription().subscription
 var existingRg = hasExisting ? existingParts[4] : resourceGroup().name
 var existingName = hasExisting ? last(existingParts) : ''
 
-resource newStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = if (!hasExisting) {
+resource newStorageAccount 'Microsoft.Storage/storageAccounts@2025-08-01' = if (!hasExisting) {
   name: 'st${resourceToken}'
   location: location
   tags: tags
@@ -59,7 +59,7 @@ resource newStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = if (
   }
 }
 
-resource existingStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = if (hasExisting) {
+resource existingStorageAccount 'Microsoft.Storage/storageAccounts@2025-08-01' existing = if (hasExisting) {
   name: existingName
   scope: resourceGroup(existingSubId, existingRg)
 }

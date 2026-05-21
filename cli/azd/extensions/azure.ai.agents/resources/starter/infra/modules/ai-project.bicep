@@ -53,7 +53,7 @@ var isStandard = networkMode == 'byo-vnet-standard'
 // Account references (same RG)
 // ─────────────────────────────────────────────────────────────────────
 
-resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = {
   name: foundryAccountName
 
   resource existingProject 'projects' existing = if (useExistingFoundryProject) {
@@ -65,7 +65,7 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existi
 // Project (new)
 // ─────────────────────────────────────────────────────────────────────
 
-resource newProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = if (!useExistingFoundryProject) {
+resource newProject 'Microsoft.CognitiveServices/accounts/projects@2026-03-01' = if (!useExistingFoundryProject) {
   parent: foundryAccount
   name: foundryProjectName
   location: location
@@ -86,7 +86,7 @@ resource newProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-pr
 
 var provisionMonitoring = !useExistingFoundryProject && enableMonitoring
 
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-12-01-preview' = if (provisionMonitoring) {
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2025-07-01' = if (provisionMonitoring) {
   name: 'logs-${resourceToken}'
   location: location
   tags: tags
@@ -109,7 +109,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (provisionM
   }
 }
 
-resource appInsightsConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = if (provisionMonitoring) {
+resource appInsightsConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2026-03-01' = if (provisionMonitoring) {
   #disable-next-line BCP318
   parent: newProject
   name: 'appi-${resourceToken}'

@@ -68,7 +68,7 @@ resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existin
   name: peSubnetName
 }
 
-resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = {
   name: foundryAccountName
 }
 

@@ -13,7 +13,7 @@ param connectionConfig object
 @description('Credentials for the connection (e.g. { key: "..." } for ApiKey)')
 param credentials object = {}
 
-resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = {
   name: foundryAccountName
 
   resource project 'projects' existing = {
@@ -21,7 +21,7 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-04-01-preview
   }
 }
 
-resource connection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-04-01-preview' = {
+resource connection 'Microsoft.CognitiveServices/accounts/projects/connections@2026-03-01' = {
   parent: foundryAccount::project
   name: connectionConfig.name
   properties: {

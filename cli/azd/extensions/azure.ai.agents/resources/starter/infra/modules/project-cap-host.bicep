@@ -30,7 +30,7 @@ param storageConnectionName string
 @description('Project connection name for the Cosmos DB account (threadStorageConnections).')
 param cosmosDbConnectionName string
 
-resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' existing = {
   name: foundryAccountName
 
   resource project 'projects' existing = {
