@@ -35,11 +35,18 @@ type InitFromCodeAction struct {
 	credential        azcore.TokenCredential
 	deploymentDetails []project.Deployment
 	needsProvision    bool
+
+	// needsScaffold is true when the starter scaffold has been deferred
+	// from ensureProject. The deferred scaffold + env creation runs
+	// inside createDefinitionFromLocalAgent right after the agent name
+	// is chosen, so the infra/azure.yaml writes appear in the same UX
+	// block as the agent setup.
+	needsScaffold bool
 }
 
 func (a *InitFromCodeAction) Run(ctx context.Context) error {
 	var err error
-	a.projectConfig, err = a.ensureProject(ctx)
+	a.projectConfig, a.needsScaffold, err = a.ensureProject(ctx)
 	if err != nil {
 		return err
 	}
@@ -49,8 +56,12 @@ func (a *InitFromCodeAction) Run(ctx context.Context) error {
 		Resources: []string{},
 	}
 
-	// If src path is absolute, convert it to relative path compared to the azd project path
-	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
+	// If src path is absolute, convert it to relative path compared to
+	// the azd project path. Defer this when a scaffold is still pending
+	// -- there is no project yet, so Project().Get() would fail. The
+	// deferred normalization happens after createDefinitionFromLocalAgent
+	// writes the starter and re-fetches the project.
+	if a.flags.src != "" && filepath.IsAbs(a.flags.src) && !a.needsScaffold {
 		projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 		if err != nil {
 			return fmt.Errorf("failed to get project path: %w", err)
@@ -163,46 +174,77 @@ func (a *InitFromCodeAction) Run(ctx context.Context) error {
 	return nil
 }
 
-func (a *InitFromCodeAction) ensureProject(ctx context.Context) (*azdext.ProjectConfig, error) {
+func (a *InitFromCodeAction) ensureProject(ctx context.Context) (*azdext.ProjectConfig, bool, error) {
 	projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 	if err != nil {
-		fmt.Println("Let's get your project initialized.")
-
-		if err := scaffold.ScaffoldStarter(ctx, a.azdClient, scaffold.StarterOptions{
-			TargetDir: ".",
-			NoPrompt:  a.flags != nil && a.flags.noPrompt,
-		}); err != nil {
-			if exterrors.IsCancellation(err) {
-				return nil, exterrors.Cancelled("project initialization was cancelled")
-			}
-			return nil, exterrors.Dependency(
-				exterrors.CodeScaffoldTemplateFailed,
-				fmt.Sprintf("failed to scaffold starter template: %s", err),
-				"",
-			)
-		}
-
-		projectResponse, err = a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
-		if err != nil {
-			return nil, exterrors.Dependency(
-				exterrors.CodeProjectNotFound,
-				fmt.Sprintf("failed to get project after initialization: %s", err),
-				"",
-			)
-		}
-
-		fmt.Println()
+		// No azd project yet -- defer scaffolding to
+		// createDefinitionFromLocalAgent so the infra/azure.yaml writes
+		// land in the same UX block as the agent setup.
+		return nil, true, nil
 	}
 
 	if projectResponse.Project == nil {
-		return nil, exterrors.Dependency(
-			exterrors.CodeProjectNotFound,
-			"project not found",
+		return nil, true, nil
+	}
+
+	return projectResponse.Project, false, nil
+}
+
+// scaffoldStarterAndRefresh writes the embedded starter (azure.yaml +
+// infra/**), re-fetches the project config, and finishes any deferred
+// path normalization. It runs inside createDefinitionFromLocalAgent so
+// the infra writes appear in the same UX block as the agent setup.
+//
+// On success a.needsScaffold is cleared so a future re-entry is a no-op.
+func (a *InitFromCodeAction) scaffoldStarterAndRefresh(ctx context.Context) error {
+	if !a.needsScaffold {
+		return nil
+	}
+
+	if err := scaffold.ScaffoldStarter(ctx, a.azdClient, scaffold.StarterOptions{
+		TargetDir: ".",
+		NoPrompt:  a.flags != nil && a.flags.noPrompt,
+		Inline:    true,
+	}); err != nil {
+		if exterrors.IsCancellation(err) {
+			return exterrors.Cancelled("project initialization was cancelled")
+		}
+		return exterrors.Dependency(
+			exterrors.CodeScaffoldTemplateFailed,
+			fmt.Sprintf("failed to scaffold starter template: %s", err),
 			"",
 		)
 	}
 
-	return projectResponse.Project, nil
+	projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
+	if err != nil {
+		return exterrors.Dependency(
+			exterrors.CodeProjectNotFound,
+			fmt.Sprintf("failed to get project after initialization: %s", err),
+			"",
+		)
+	}
+	if projectResponse.Project == nil {
+		return exterrors.Dependency(
+			exterrors.CodeProjectNotFound,
+			"project not found after scaffolding",
+			"",
+		)
+	}
+	a.projectConfig = projectResponse.Project
+
+	// Now that the project exists, finish the absolute --src
+	// normalization that Run() deferred.
+	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
+		relPath, relErr := filepath.Rel(a.projectConfig.Path, a.flags.src)
+		if relErr != nil {
+			return fmt.Errorf("failed to convert src path to relative path: %w", relErr)
+		}
+		a.flags.src = relPath
+	}
+
+	a.needsScaffold = false
+	return nil
 }
 
 // createDefinitionFromLocalAgent creates a ContainerAgent for local agent code
@@ -217,6 +259,16 @@ func (a *InitFromCodeAction) createDefinitionFromLocalAgent(ctx context.Context)
 	agentName, err := resolveInitAgentName(ctx, a.azdClient, a.flags, defaultName)
 	if err != nil {
 		return nil, err
+	}
+
+	// Run the deferred starter scaffold + project re-fetch now -- after
+	// the agent name is chosen but before env creation, so the infra +
+	// azure.yaml writes land in the same UX block as the agent setup
+	// instead of as a separate up-front prep step.
+	if a.needsScaffold {
+		if err := a.scaffoldStarterAndRefresh(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// Create the azd environment now that we have the agent name

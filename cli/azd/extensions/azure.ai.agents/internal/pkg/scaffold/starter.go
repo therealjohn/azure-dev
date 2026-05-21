@@ -59,6 +59,19 @@ type StarterOptions struct {
 	//   - any collision: return a Validation error. Callers should not
 	//     silently overwrite or skip in non-interactive mode.
 	NoPrompt bool
+
+	// Inline switches the UX to a streamlined mode intended for callers
+	// that already committed the user to scaffolding (e.g. the manifest
+	// flow that just validated an agent template). Behavior:
+	//   - No "The following files will be created" preview block.
+	//   - No "Initialize the starter template?" confirm prompt.
+	//   - Header "Initializing project files:" then one green-plus line
+	//     per file as it is written.
+	//   - Collision handling is unchanged: the colliding paths are listed
+	//     so the user can make an informed overwrite/skip/cancel choice
+	//     (or, in NoPrompt mode, the call still returns a Validation
+	//     error).
+	Inline bool
 }
 
 // ScaffoldStarter walks the embedded `azd-ai-starter-basic` payload
@@ -102,16 +115,29 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 		}
 	}
 
-	// Display the file list (matches the old scaffoldTemplate output).
-	fmt.Print("\nThe following files will be created from the starter template:\n\n")
-	for _, e := range entries {
-		if e.collides {
-			fmt.Printf("  %s  %s\n", color.YellowString("!"), color.YellowString(e.file.Path))
-		} else {
-			fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(e.file.Path))
+	if !opts.Inline {
+		// Display the file list (matches the old scaffoldTemplate output).
+		fmt.Print("\nThe following files will be created from the starter template:\n\n")
+		for _, e := range entries {
+			if e.collides {
+				fmt.Printf("  %s  %s\n", color.YellowString("!"), color.YellowString(e.file.Path))
+			} else {
+				fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(e.file.Path))
+			}
 		}
+		fmt.Println()
+	} else if collisions > 0 {
+		// Inline mode normally skips the preview, but still surface the
+		// colliding paths so the user can answer the overwrite prompt
+		// with full context.
+		fmt.Println()
+		for _, e := range entries {
+			if e.collides {
+				fmt.Printf("  %s  %s\n", color.YellowString("!"), color.YellowString(e.file.Path))
+			}
+		}
+		fmt.Println()
 	}
-	fmt.Println()
 
 	overwriteCollisions := false
 	switch {
@@ -157,7 +183,7 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 			return exterrors.Cancelled("starter template scaffolding was cancelled")
 		}
 
-	case !opts.NoPrompt:
+	case !opts.NoPrompt && !opts.Inline:
 		confirmResp, err := azdClient.Prompt().Confirm(ctx, &azdext.ConfirmRequest{
 			Options: &azdext.ConfirmOptions{
 				Message:      "Initialize the starter template?",
@@ -179,6 +205,10 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 		}
 	}
 
+	if opts.Inline {
+		fmt.Println("Initializing project files:")
+	}
+
 	// Write files. We always write non-colliding files; colliding files are
 	// only written when the user chose "overwrite".
 	written := 0
@@ -192,6 +222,9 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 				exterrors.CodeScaffoldTemplateFailed,
 				fmt.Sprintf("writing %s: %s", e.file.Path, err),
 			)
+		}
+		if opts.Inline {
+			fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(e.file.Path))
 		}
 		written++
 	}

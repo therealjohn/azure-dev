@@ -6,6 +6,7 @@ package cmd
 import (
 	"azureaiagent/internal/exterrors"
 	"azureaiagent/internal/pkg/agents/agent_yaml"
+	"azureaiagent/internal/pkg/scaffold"
 	"context"
 	"errors"
 	"fmt"
@@ -85,9 +86,45 @@ func runReuseDefinition(
 		displayPath, def.Name,
 	))
 
-	projectConfig, err := ensureProject(ctx, flags, azdClient, ".")
+	projectConfig, needsScaffold, err := ensureProject(ctx, azdClient)
 	if err != nil {
 		return err
+	}
+
+	// When no azd project exists yet, scaffold the starter template
+	// (azure.yaml + infra/) so the reuse path has a project to wire the
+	// existing agent definition into.
+	if needsScaffold {
+		if err := scaffold.ScaffoldStarter(ctx, azdClient, scaffold.StarterOptions{
+			TargetDir: ".",
+			NoPrompt:  flags.noPrompt,
+		}); err != nil {
+			if exterrors.IsCancellation(err) {
+				return exterrors.Cancelled("project initialization was cancelled")
+			}
+			return exterrors.Dependency(
+				exterrors.CodeScaffoldTemplateFailed,
+				fmt.Sprintf("failed to scaffold starter template: %s", err),
+				"",
+			)
+		}
+
+		projectResponse, projErr := azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
+		if projErr != nil {
+			return exterrors.Dependency(
+				exterrors.CodeProjectNotFound,
+				fmt.Sprintf("failed to get project after initialization: %s", projErr),
+				"",
+			)
+		}
+		if projectResponse.Project == nil {
+			return exterrors.Dependency(
+				exterrors.CodeProjectNotFound,
+				"project not found after scaffolding",
+				"",
+			)
+		}
+		projectConfig = projectResponse.Project
 	}
 
 	// Mirror InitFromCodeAction.Run: convert absolute --src to project-relative

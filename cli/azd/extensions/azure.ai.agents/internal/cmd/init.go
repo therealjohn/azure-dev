@@ -104,6 +104,17 @@ type InitAction struct {
 	// interactively selects a template that resolves to a manifest. When true,
 	// the init flow applies opinionated defaults to minimize interactive prompts.
 	userProvidedManifest bool
+
+	// needsScaffold is true when runInitFromManifest deferred the starter
+	// scaffold + env/context setup. When true, the scaffold runs inside
+	// downloadAgentYaml right after the manifest is validated, so the
+	// files appear in the same UX step as the agent sample downloads.
+	// After initializeProjectArtifacts succeeds, it is cleared.
+	needsScaffold bool
+
+	// scaffoldEnvName carries the --environment flag value through to the
+	// deferred env-creation step. Empty means "derive from cwd".
+	scaffoldEnvName string
 }
 
 // modelSelector encapsulates the dependencies needed for model selection and
@@ -788,41 +799,71 @@ func runInitFromManifest(
 	createdFolderDisplay string,
 	userProvidedManifest bool,
 ) error {
-	// Ensure project and environment exist (no subscription/location prompting yet)
-	projectConfig, err := ensureProject(ctx, flags, azdClient, targetDir)
+	// Probe for an existing project (no scaffold here). When the project
+	// is missing, we DEFER the scaffold + env/context setup until after
+	// the agent manifest is validated so all "files being written" output
+	// appears in one continuous block.
+	projectConfig, needsScaffold, err := ensureProject(ctx, azdClient)
 	if err != nil {
 		return err
 	}
 
-	// Get or create environment
-	env := getExistingEnvironment(ctx, flags.env, azdClient)
-	if env == nil {
-		fmt.Println("Lets create a new default azd environment for your project.")
-		env, err = createNewEnvironment(ctx, azdClient, flags.env)
+	var (
+		env          *azdext.Environment
+		azureContext *azdext.AzureContext
+		credential   azcore.TokenCredential
+	)
+
+	if needsScaffold {
+		// No azure.yaml yet, so env new would fail. Use empty context
+		// and a default-tenant credential; initializeProjectArtifacts
+		// will populate these after the scaffold writes azure.yaml.
+		azureContext = &azdext.AzureContext{
+			Scope:     &azdext.AzureScope{},
+			Resources: []string{},
+		}
+		credential, err = azidentity.NewAzureDeveloperCLICredential(
+			&azidentity.AzureDeveloperCLICredentialOptions{
+				AdditionallyAllowedTenants: []string{"*"},
+			},
+		)
+		if err != nil {
+			return exterrors.Auth(
+				exterrors.CodeCredentialCreationFailed,
+				fmt.Sprintf("failed to create Azure credential: %s", err),
+				"run 'azd auth login' to authenticate",
+			)
+		}
+	} else {
+		// Project already exists -- standard get-or-create env, load
+		// context, build credential.
+		env = getExistingEnvironment(ctx, flags.env, azdClient)
+		if env == nil {
+			fmt.Println("Lets create a new default azd environment for your project.")
+			env, err = createNewEnvironment(ctx, azdClient, flags.env)
+			if err != nil {
+				return err
+			}
+		}
+
+		azureContext, err = loadAzureContext(ctx, azdClient, env.Name)
 		if err != nil {
 			return err
 		}
-	}
 
-	// Load whatever Azure context values already exist in the environment
-	azureContext, err := loadAzureContext(ctx, azdClient, env.Name)
-	if err != nil {
-		return err
-	}
-
-	// Create credential with whatever tenant is available (may be empty → default tenant)
-	credential, err := azidentity.NewAzureDeveloperCLICredential(
-		&azidentity.AzureDeveloperCLICredentialOptions{
-			TenantID:                   azureContext.Scope.TenantId,
-			AdditionallyAllowedTenants: []string{"*"},
-		},
-	)
-	if err != nil {
-		return exterrors.Auth(
-			exterrors.CodeCredentialCreationFailed,
-			fmt.Sprintf("failed to create Azure credential: %s", err),
-			"run 'azd auth login' to authenticate",
+		credential, err = azidentity.NewAzureDeveloperCLICredential(
+			&azidentity.AzureDeveloperCLICredentialOptions{
+				TenantID:                   azureContext.Scope.TenantId,
+				AdditionallyAllowedTenants: []string{"*"},
+			},
 		)
+		if err != nil {
+			return exterrors.Auth(
+				exterrors.CodeCredentialCreationFailed,
+				fmt.Sprintf("failed to create Azure credential: %s", err),
+				"run 'azd auth login' to authenticate",
+			)
+		}
 	}
 
 	console := input.NewConsole(
@@ -849,6 +890,8 @@ func runInitFromManifest(
 		httpClient:           httpClient,
 		createdFolderDisplay: createdFolderDisplay,
 		userProvidedManifest: userProvidedManifest,
+		needsScaffold:        needsScaffold,
+		scaffoldEnvName:      flags.env,
 	}
 
 	return action.Run(ctx)
@@ -1318,8 +1361,12 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 
 func (a *InitAction) Run(ctx context.Context) error {
 
-	// If src path is absolute, convert it to relative path compared to the azd project path
-	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
+	// If src path is absolute, convert it to relative path compared to the
+	// azd project path. Defer this when a scaffold is still pending --
+	// there is no project yet, so Project().Get() would fail. The deferred
+	// normalization happens inside initializeProjectArtifacts after the
+	// scaffold writes azure.yaml.
+	if a.flags.src != "" && filepath.IsAbs(a.flags.src) && !a.needsScaffold {
 		projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 		if err != nil {
 			return fmt.Errorf("failed to get project path: %w", err)
@@ -1480,122 +1527,163 @@ func (a *InitAction) Run(ctx context.Context) error {
 	return nil
 }
 
-func ensureProject(
-	ctx context.Context,
-	flags *initFlags,
-	azdClient *azdext.AzdClient,
-	targetDir string,
-) (*azdext.ProjectConfig, error) {
+// ensureProject looks up the current azd project. It returns the project
+// config when one exists; otherwise it returns needsScaffold=true so the
+// caller can defer the starter template write until later in the init
+// flow. This function NEVER scaffolds and NEVER creates an environment;
+// those are handled by initializeProjectArtifacts after the agent
+// manifest has been validated.
+func ensureProject(ctx context.Context, azdClient *azdext.AzdClient) (*azdext.ProjectConfig, bool, error) {
 	projectResponse, err := azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 	if err != nil {
-		fmt.Println("Let's get your project initialized.")
-
-		// Derive the environment name now so it's available for both the
-		// scaffold step (UX/messaging) and createNewEnvironment below.
-		envName := flags.env
-		if envName == "" {
-			// Derive environment name from target folder
-			envBase := targetDir
-			if targetDir == "." {
-				cwd, cwdErr := os.Getwd()
-				if cwdErr == nil {
-					envBase = filepath.Base(cwd)
-				}
-			}
-			base := sanitizeAgentName(envBase)
-			if len(base) > 59 {
-				base = strings.TrimRight(base[:59], "-")
-			}
-			envName = base + "-dev"
-		}
-
-		// 1. Write the embedded `azd-ai-starter-basic` payload (azure.yaml +
-		// infra/) into the target directory. The extension owns the
-		// scaffold now, so no GitHub fetch is required.
-		if err := scaffold.ScaffoldStarter(ctx, azdClient, scaffold.StarterOptions{
-			TargetDir: targetDir,
-			NoPrompt:  flags.noPrompt,
-		}); err != nil {
-			if exterrors.IsCancellation(err) {
-				return nil, exterrors.Cancelled("project initialization was cancelled")
-			}
-			return nil, exterrors.Dependency(
-				exterrors.CodeScaffoldTemplateFailed,
-				fmt.Sprintf("failed to scaffold starter template: %s", err),
-				"",
-			)
-		}
-
-		// Sync the extension process into the new project directory so that
-		// subsequent env creation and local file operations see the
-		// scaffolded project.
-		if targetDir != "." {
-			if chdirErr := os.Chdir(targetDir); chdirErr != nil {
-				return nil, fmt.Errorf(
-					"changing to project directory %q: %w",
-					targetDir, chdirErr,
-				)
-			}
-		}
-
-		// 2. Create the env via the same `azd env new` helper the other
-		// init paths use. We intentionally avoid dispatching `azd init`
-		// here: --from-code rejects the positional `.` and would re-run
-		// app-scaffolding that could overwrite the just-written
-		// azure.yaml, while plain `azd init` would re-trigger extension
-		// initialization while this same extension is mid-execution.
-		if _, envErr := createNewEnvironment(ctx, azdClient, envName); envErr != nil {
-			return nil, envErr
-		}
-
-		// 3. Best-effort: generate a salt so uniqueString()-based resource names
-		// differ across project recreations. If anything fails the Bicep
-		// templates fall back to the original deterministic hash.
-		salt := ensureResourceTokenSalt(ctx, azdClient, envName)
-
-		// 4. Best-effort: write a salted AZURE_RESOURCE_GROUP so recreated
-		// projects get a fresh RG (avoiding collisions with leftovers from
-		// a prior teardown). Skipped when salt generation failed or when
-		// AZURE_RESOURCE_GROUP is already set.
-		ensureResourceGroupName(ctx, azdClient, envName, salt)
-
-		projectResponse, err = azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
-		if err != nil {
-			return nil, exterrors.Dependency(
-				exterrors.CodeProjectNotFound,
-				fmt.Sprintf("failed to get project after initialization: %s", err),
-				"",
-			)
-		}
-
-		fmt.Println()
-	} else if projectResponse.Project != nil {
-		// An existing azd project was found — tell the user so the skipped template
-		// download isn't a mystery. Also warn if the project lacks an infra/ directory,
-		// since deployment may require infrastructure scaffolding.
-		fmt.Println(output.WithGrayFormat(
-			"Found existing azd project at %q. Adding agent to it.", projectResponse.Project.Path,
-		))
-
-		infraDir := filepath.Join(projectResponse.Project.Path, "infra")
-		if _, statErr := os.Stat(infraDir); os.IsNotExist(statErr) {
-			fmt.Printf("%s", output.WithWarningFormat(
-				"No infra/ directory found in the project. If you need Azure infrastructure "+
-					"for deployment, run 'azd ai agent init' in an empty directory first, then "+
-					"re-run this command from there.\n",
-			))
-		}
+		// Any lookup failure is treated as "no project on disk yet" so the
+		// caller defers scaffolding. This matches the previous behavior of
+		// this function and keeps the scaffold path simple.
+		return nil, true, nil
 	}
 
 	if projectResponse.Project == nil {
-		return nil, exterrors.Dependency(
-			exterrors.CodeProjectNotFound,
-			"project not found",
+		return nil, true, nil
+	}
+
+	// An existing azd project was found -- tell the user so the skipped
+	// scaffold isn't a mystery. Also warn if the project lacks an
+	// infra/ directory, since deployment may require infrastructure
+	// scaffolding.
+	fmt.Println(output.WithGrayFormat(
+		"Found existing azd project at %q. Adding agent to it.", projectResponse.Project.Path,
+	))
+
+	infraDir := filepath.Join(projectResponse.Project.Path, "infra")
+	if _, statErr := os.Stat(infraDir); os.IsNotExist(statErr) {
+		fmt.Printf("%s", output.WithWarningFormat(
+			"No infra/ directory found in the project. If you need Azure infrastructure "+
+				"for deployment, run 'azd ai agent init' in an empty directory first, then "+
+				"re-run this command from there.\n",
+		))
+	}
+
+	return projectResponse.Project, false, nil
+}
+
+// initializeProjectArtifacts performs the work that ensureProject used to
+// do up front when no azd project existed: scaffold the embedded starter
+// (azure.yaml + infra/**), create the azd environment, load the Azure
+// context, rebuild the credential with the resolved tenant, and re-fetch
+// the project config. It runs inline with the agent download UX so the
+// user sees one continuous "files being written" block.
+//
+// On success a.needsScaffold is cleared so a future re-entry is a no-op.
+func (a *InitAction) initializeProjectArtifacts(ctx context.Context) error {
+	if !a.needsScaffold {
+		return nil
+	}
+
+	// 1. Write the embedded starter payload (azure.yaml + infra/**).
+	if err := scaffold.ScaffoldStarter(ctx, a.azdClient, scaffold.StarterOptions{
+		TargetDir: ".",
+		NoPrompt:  a.flags.noPrompt,
+		Inline:    true,
+	}); err != nil {
+		if exterrors.IsCancellation(err) {
+			return exterrors.Cancelled("project initialization was cancelled")
+		}
+		return exterrors.Dependency(
+			exterrors.CodeScaffoldTemplateFailed,
+			fmt.Sprintf("failed to scaffold starter template: %s", err),
 			"",
 		)
 	}
 
-	return projectResponse.Project, nil
+	// 2. Resolve the environment name. Prefer the explicit --environment
+	// value carried from flags; otherwise derive from cwd (matches the
+	// previous "azd init -t ... --environment <name>" behavior).
+	envName := a.scaffoldEnvName
+	if envName == "" {
+		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+			envName = sanitizeAgentName(filepath.Base(cwd)) + "-dev"
+		}
+	}
+
+	// 3. Create the env via the same "azd env new" helper the other init
+	// paths use. azure.yaml is on disk now, so the workflow succeeds.
+	env, envErr := createNewEnvironment(ctx, a.azdClient, envName)
+	if envErr != nil {
+		return envErr
+	}
+	a.environment = env
+
+	// Best-effort: generate a salt so uniqueString()-based resource names
+	// differ across project recreations. If anything fails the Bicep
+	// templates fall back to the original deterministic hash.
+	salt := ensureResourceTokenSalt(ctx, a.azdClient, envName)
+
+	// Best-effort: write a salted AZURE_RESOURCE_GROUP so recreated
+	// projects get a fresh RG (avoiding collisions with leftovers from
+	// a prior teardown). Skipped when salt generation failed or when
+	// AZURE_RESOURCE_GROUP is already set.
+	ensureResourceGroupName(ctx, a.azdClient, envName, salt)
+
+	// 4. Load whatever Azure context values exist in the new env (mostly
+	// empty at this point) and rebuild the credential bound to the
+	// resolved tenant if one is present.
+	azureContext, ctxErr := loadAzureContext(ctx, a.azdClient, env.Name)
+	if ctxErr != nil {
+		return ctxErr
+	}
+	a.azureContext = azureContext
+
+	credential, credErr := azidentity.NewAzureDeveloperCLICredential(
+		&azidentity.AzureDeveloperCLICredentialOptions{
+			TenantID:                   azureContext.Scope.TenantId,
+			AdditionallyAllowedTenants: []string{"*"},
+		},
+	)
+	if credErr != nil {
+		return exterrors.Auth(
+			exterrors.CodeCredentialCreationFailed,
+			fmt.Sprintf("failed to create Azure credential: %s", credErr),
+			"run 'azd auth login' to authenticate",
+		)
+	}
+	a.credential = credential
+
+	// 5. Re-fetch the project config so downstream code (addToProject,
+	// resolveStartupCommandForInit, etc.) can dereference a.projectConfig
+	// safely.
+	projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
+	if err != nil {
+		return exterrors.Dependency(
+			exterrors.CodeProjectNotFound,
+			fmt.Sprintf("failed to get project after initialization: %s", err),
+			"",
+		)
+	}
+	if projectResponse.Project == nil {
+		return exterrors.Dependency(
+			exterrors.CodeProjectNotFound,
+			"project not found after scaffolding",
+			"",
+		)
+	}
+	a.projectConfig = projectResponse.Project
+
+	// 6. Now that the project exists, finish the absolute --src
+	// normalization that Run() deferred.
+	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
+		relPath, relErr := filepath.Rel(a.projectConfig.Path, a.flags.src)
+		if relErr != nil {
+			return fmt.Errorf("failed to convert src path to relative path: %w", relErr)
+		}
+		a.flags.src = relPath
+	}
+
+	// 7. Reset the cached model selector so it picks up the freshly
+	// populated environment/azure context the next time it is requested.
+	a.models = nil
+
+	a.needsScaffold = false
+	return nil
 }
 
 func getExistingEnvironment(ctx context.Context, envName string, azdClient *azdext.AzdClient) *azdext.Environment {
@@ -2411,6 +2499,17 @@ func (a *InitAction) downloadAgentYaml(
 		}
 	}
 	a.serviceNameOverride = serviceName
+
+	// Run the deferred starter scaffold + env/context setup now -- after
+	// the manifest is validated and the user has committed to a target
+	// directory, but before any sample files are copied or downloaded.
+	// This puts the infra/azure.yaml writes in the same UX block as the
+	// agent sample downloads instead of as a separate up-front prep step.
+	if a.needsScaffold {
+		if err := a.initializeProjectArtifacts(ctx); err != nil {
+			return nil, "", err
+		}
+	}
 
 	// Safety checks for local container-based agents should happen before prompting for model SKU, etc.
 	if isLocalFilePath(manifestPointer) {
