@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	roleAzureAIUser     = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+	roleFoundryUser     = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
 	agentIdentitySuffix = "AgentIdentity"
 
 	rbacVerifyMaxAttempts  = 12
@@ -159,7 +159,7 @@ func EnsureAgentIdentityRBAC(
 }
 
 // ensureAgentIdentityRBACWithCred performs the core per-agent identity RBAC logic using
-// the provided credential. For each agent, it assigns Azure AI User scoped to the Foundry Project.
+// the provided credential. For each agent, it assigns Foundry User scoped to the Foundry Project.
 // The principal ID must be provided from the deploy response. Agents are processed in parallel.
 func ensureAgentIdentityRBACWithCred(
 	ctx context.Context,
@@ -228,7 +228,7 @@ func ensureSingleAgentRBAC(
 	fmt.Printf("  Agent identity: %s (principal: %s)\n", agentName, principalID)
 
 	created, err := assignRoleToIdentity(
-		ctx, cred, principalID, roleAzureAIUser, "Azure AI User → Foundry Project", info.ProjectScope,
+		ctx, cred, principalID, roleFoundryUser, "Foundry User → Foundry Project", info.ProjectScope,
 		armauthorization.PrincipalTypeServicePrincipal,
 	)
 	if err != nil {
@@ -237,13 +237,13 @@ func ensureSingleAgentRBAC(
 			manualRemediationCommand := fmt.Sprintf(
 				"az role assignment create --assignee-object-id %s --assignee-principal-type ServicePrincipal --role %s --scope %s",
 				strconv.Quote(principalID),
-				strconv.Quote("Azure AI User"),
+				strconv.Quote("Foundry User"),
 				strconv.Quote(info.ProjectScope),
 			)
 
 			// Write with warning color so it appears as a yellow warning, not a red error.
 			fmt.Printf("%s\n", output.WithWarningFormat(
-				"Could not assign 'Azure AI User' to agent identity '%s' (403 Forbidden).\n"+
+				"Could not assign 'Foundry User' to agent identity '%s' (403 Forbidden).\n"+
 					"    The agent may not have access to the Foundry Project until this role is assigned.\n"+
 					"    Principal ID: %s\n"+
 					"    Foundry Project scope: %s\n"+
@@ -257,18 +257,18 @@ func ensureSingleAgentRBAC(
 			))
 			return nil
 		}
-		return fmt.Errorf("failed to assign Azure AI User role: %w", err)
+		return fmt.Errorf("failed to assign Foundry User role: %w", err)
 	}
 
 	if created {
-		fmt.Println("    ✓ Azure AI User → Foundry Project (created)")
-		fmt.Println("    ⏳ Verifying Azure AI User...")
-		if err := verifyRoleAssignment(ctx, cred, principalID, roleAzureAIUser, info.ProjectScope); err != nil {
-			return fmt.Errorf("failed to verify Azure AI User role assignment: %w", err)
+		fmt.Println("    ✓ Foundry User → Foundry Project (created)")
+		fmt.Println("    ⏳ Verifying Foundry User...")
+		if err := verifyRoleAssignment(ctx, cred, principalID, roleFoundryUser, info.ProjectScope); err != nil {
+			return fmt.Errorf("failed to verify Foundry User role assignment: %w", err)
 		}
-		fmt.Println("    ✓ Azure AI User → Foundry Project (verified)")
+		fmt.Println("    ✓ Foundry User → Foundry Project (verified)")
 	} else {
-		fmt.Println("    ✓ Azure AI User → Foundry Project (already assigned)")
+		fmt.Println("    ✓ Foundry User → Foundry Project (already assigned)")
 	}
 
 	return nil

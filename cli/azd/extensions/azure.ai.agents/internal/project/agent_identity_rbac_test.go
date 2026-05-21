@@ -125,5 +125,5 @@ func TestExtractSubscriptionID(t *testing.T) {
 }
 
 func TestConstants(t *testing.T) {
-	assert.Equal(t, "53ca6127-db72-4b80-b1b0-d745d6d5456d", roleAzureAIUser)
+	assert.Equal(t, "53ca6127-db72-4b80-b1b0-d745d6d5456d", roleFoundryUser)
 }

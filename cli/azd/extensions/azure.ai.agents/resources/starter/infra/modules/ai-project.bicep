@@ -144,22 +144,23 @@ resource logAnalyticsReaderRole 'Microsoft.Authorization/roleAssignments@2022-04
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// RBAC — Azure AI User for the developer on the NEW project only
+// RBAC — Foundry User for the developer on the NEW project only
+// (Foundry User was previously named "Azure AI User"; role ID unchanged.)
 // Existing projects: the caller already has access to them (otherwise they
 // couldn't have selected the project), so the template does not re-assign
 // roles to existing projects.
 // ─────────────────────────────────────────────────────────────────────
 
-var aiUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
+var foundryUserRoleId = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 
 resource newProjectRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useExistingFoundryProject) {
   #disable-next-line BCP318
   scope: newProject
-  name: guid(subscription().id, resourceGroup().id, principalId, aiUserRoleId, foundryProjectName)
+  name: guid(subscription().id, resourceGroup().id, principalId, foundryUserRoleId, foundryProjectName)
   properties: {
     principalId: principalId
     principalType: principalType
-    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', aiUserRoleId)
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', foundryUserRoleId)
   }
 }
 
