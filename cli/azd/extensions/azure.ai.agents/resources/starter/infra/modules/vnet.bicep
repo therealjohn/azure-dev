@@ -11,7 +11,8 @@ targetScope = 'resourceGroup'
   Preconditions when using an existing VNet:
     - The agent subnet MUST already be delegated to Microsoft.App/environments.
     - The PE subnet must support private endpoints (no policies preventing PEs).
-    - The Foundry account region MUST match the VNet region.
+    - The Foundry account region MUST match the VNet region (when main.bicep
+      provisions both, set `aiDeploymentsLocation` to keep them aligned).
 */
 
 @description('Location for the new VNet (ignored when an existing VNet is referenced).')

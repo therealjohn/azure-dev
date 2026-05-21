@@ -11,8 +11,11 @@ param environmentName string
 param resourceGroupName string = 'rg-${environmentName}'
 
 @minLength(1)
-@description('Primary location for all resources')
+@description('Primary location for the resource group. Provisioned Azure resources default to `aiDeploymentsLocation`, which defaults to this value. Override `aiDeploymentsLocation` (or set `AZURE_AI_DEPLOYMENTS_LOCATION`) when the resource group must live in one region but the Foundry account / model deployments need to live in another (e.g. the RG region lacks quota for the model).')
 param location string
+
+@description('Optional. Location for the Foundry account, project, model deployments, and every co-located resource (VNet, private endpoints, ACR, Standard data resources). Empty defaults to `location`. Set this (or `AZURE_AI_DEPLOYMENTS_LOCATION`) when the resource group region differs from the region with model quota. The Foundry account, the VNet/customer subnet feeding the capability host, and any co-located private endpoints MUST share a region -- this parameter keeps them aligned automatically.')
+param aiDeploymentsLocation string = ''
 
 @description('Id of the user or app to assign application roles')
 param principalId string
@@ -147,6 +150,12 @@ var tags = { 'azd-env-name': environmentName }
 var createAcr = !skipAcr && empty(existingAcrConnectionName)
 var resourceToken = uniqueString(subscription().id, resourceGroupName, location)
 
+// aiDeploymentsLocation defaults to `location` when not explicitly provided.
+// All provisioned Azure resources (Foundry account/project/deployments, VNet,
+// private endpoints, ACR, Standard data resources) are placed in this location.
+// The resource group itself stays in `location`.
+var resolvedAiDeploymentsLocation = empty(aiDeploymentsLocation) ? location : aiDeploymentsLocation
+
 // useExistingFoundryAccount is implied true if the ARM ID was supplied.
 var resolvedUseExistingFoundryAccount = useExistingFoundryAccount || !empty(foundryAccountResourceId)
 
@@ -181,7 +190,7 @@ module vnet './modules/vnet.bicep' = if (isByoVnet) {
   scope: rg
   name: 'vnet'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     vnetName: vnetName
     existingVnetResourceId: existingVnetResourceId
@@ -204,7 +213,7 @@ module foundryAccount './modules/ai-account.bicep' = {
   scope: rg
   name: 'ai-account'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     accountName: resolvedAccountName
     useExistingAccount: resolvedUseExistingFoundryAccount
@@ -226,6 +235,7 @@ module accountPeDns './modules/private-endpoint-and-dns.bicep' = if (isByoVnet) 
   scope: rg
   name: 'account-pe-dns'
   params: {
+    location: resolvedAiDeploymentsLocation
     foundryAccountName: foundryAccount.outputs.accountName
     foundryAccountId: foundryAccount.outputs.accountId
     #disable-next-line BCP318
@@ -249,7 +259,7 @@ module foundryProject './modules/ai-project.bicep' = {
   scope: rg
   name: 'ai-project'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     foundryProjectName: foundryProjectName
     foundryAccountName: foundryAccount.outputs.accountName
@@ -281,7 +291,7 @@ module storageStandard './modules/storage.bicep' = if (provisionStandard) {
   scope: rg
   name: 'storage-standard'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     foundryAccountName: foundryAccount.outputs.accountName
     foundryProjectName: foundryProjectName
@@ -298,7 +308,7 @@ module foundrySearch './modules/ai-search.bicep' = if (provisionStandard) {
   scope: rg
   name: 'ai-search-standard'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     foundryAccountName: foundryAccount.outputs.accountName
     foundryProjectName: foundryProjectName
@@ -315,7 +325,7 @@ module cosmos './modules/cosmos.bicep' = if (provisionStandard) {
   scope: rg
   name: 'cosmos-standard'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     foundryAccountName: foundryAccount.outputs.accountName
     foundryProjectName: foundryProjectName
@@ -329,6 +339,7 @@ module dataPeDns './modules/private-endpoint-and-dns-data.bicep' = if (provision
   scope: rg
   name: 'data-pe-dns'
   params: {
+    location: resolvedAiDeploymentsLocation
     #disable-next-line BCP318
     vnetName: isByoVnet ? vnet.outputs.vnetName : ''
     #disable-next-line BCP318
@@ -425,7 +436,7 @@ module acr './modules/acr.bicep' = if (createAcr) {
   scope: rg
   name: 'acr'
   params: {
-    location: location
+    location: resolvedAiDeploymentsLocation
     tags: tags
     foundryAccountName: foundryAccount.outputs.accountName
     foundryProjectName: foundryProject.outputs.projectName

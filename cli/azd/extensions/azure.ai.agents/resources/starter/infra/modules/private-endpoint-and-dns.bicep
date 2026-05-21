@@ -21,6 +21,9 @@ param foundryAccountName string
 @description('Optional full ARM resource ID of the AI Foundry account. Use when the account lives in a different RG/subscription from the PE. When empty, the account is looked up by name in the current RG.')
 param foundryAccountId string = ''
 
+@description('Location for the private endpoint. Must match the region of the subnet/VNet the PE is attached to. Defaults to the current resource group location.')
+param location string = resourceGroup().location
+
 @description('Name of the VNet containing the PE subnet.')
 param vnetName string
 
@@ -74,7 +77,7 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2026-03-01' existi
 
 resource foundryAccountPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${foundryAccountName}-pe-${suffix}'
-  location: resourceGroup().location
+  location: location
   properties: {
     subnet: { id: peSubnet.id }
     privateLinkServiceConnections: [

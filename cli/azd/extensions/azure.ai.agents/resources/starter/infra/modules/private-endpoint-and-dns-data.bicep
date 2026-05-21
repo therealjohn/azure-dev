@@ -17,6 +17,9 @@ targetScope = 'resourceGroup'
 @description('Name of the VNet that hosts the PE subnet.')
 param vnetName string
 
+@description('Location for the private endpoints. Must match the region of the subnet/VNet they are attached to. Defaults to the current resource group location.')
+param location string = resourceGroup().location
+
 @description('Subscription ID of the VNet (defaults to current).')
 param vnetSubscriptionId string = subscription().subscriptionId
 
@@ -81,7 +84,7 @@ resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existin
 // ──── Cosmos DB ──────────────────────────────────────────────────────
 resource cosmosPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${cosmosDbName}-pe-${suffix}'
-  location: resourceGroup().location
+  location: location
   properties: {
     subnet: { id: peSubnet.id }
     privateLinkServiceConnections: [
@@ -131,7 +134,7 @@ resource cosmosDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups
 // ──── Storage (blob) ─────────────────────────────────────────────────
 resource storagePe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${storageAccountName}-pe-${suffix}'
-  location: resourceGroup().location
+  location: location
   properties: {
     subnet: { id: peSubnet.id }
     privateLinkServiceConnections: [
@@ -181,7 +184,7 @@ resource storageDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroup
 // ──── AI Search ──────────────────────────────────────────────────────
 resource searchPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${searchServiceName}-pe-${suffix}'
-  location: resourceGroup().location
+  location: location
   properties: {
     subnet: { id: peSubnet.id }
     privateLinkServiceConnections: [
