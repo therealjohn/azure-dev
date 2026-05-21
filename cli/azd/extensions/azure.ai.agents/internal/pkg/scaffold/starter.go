@@ -212,6 +212,11 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 	// Write files. We always write non-colliding files; colliding files are
 	// only written when the user chose "overwrite".
 	written := 0
+	// In Inline mode we collapse the per-file output to top-level entries
+	// (e.g. "azure.yaml" and "infra/") so the block stays compact next to
+	// the agent sample-file download. shown tracks which display paths we
+	// have already printed.
+	shown := map[string]bool{}
 	for _, e := range entries {
 		if e.collides && !overwriteCollisions {
 			continue
@@ -224,18 +229,35 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 			)
 		}
 		if opts.Inline {
-			fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(e.file.Path))
+			display := topLevelDisplayPath(e.file.Path)
+			if !shown[display] {
+				shown[display] = true
+				fmt.Printf("  %s  %s\n", color.GreenString("+"), color.GreenString(display))
+			}
 		}
 		written++
 	}
 
-	skipped := len(entries) - written
-	if skipped > 0 {
-		fmt.Printf("  Template initialized: %d file(s) written, %d file(s) skipped.\n", written, skipped)
-	} else {
-		fmt.Printf("  Template initialized: %d file(s) written.\n", written)
+	if !opts.Inline {
+		skipped := len(entries) - written
+		if skipped > 0 {
+			fmt.Printf("  Template initialized: %d file(s) written, %d file(s) skipped.\n", written, skipped)
+		} else {
+			fmt.Printf("  Template initialized: %d file(s) written.\n", written)
+		}
 	}
 	return nil
+}
+
+// topLevelDisplayPath returns the display string used in inline mode for a
+// slash-separated path: a file at the root prints as-is ("azure.yaml"),
+// any nested path collapses to its top-level directory plus a trailing
+// slash ("infra/main.bicep" -> "infra/").
+func topLevelDisplayPath(p string) string {
+	if i := strings.IndexByte(p, '/'); i >= 0 {
+		return p[:i] + "/"
+	}
+	return p
 }
 
 // starterFiles returns every embedded starter asset in deterministic order.

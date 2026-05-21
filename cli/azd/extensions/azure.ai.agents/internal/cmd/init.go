@@ -1415,6 +1415,14 @@ func (a *InitAction) Run(ctx context.Context) error {
 			return fmt.Errorf("downloading agent.yaml: %w", err)
 		}
 
+		// Now that the scaffold and sample-file download are done, run the
+		// deferred env creation. This places the "New environment 'X' was
+		// set as default" line AFTER "Downloaded to: ..." instead of in
+		// the middle of the file-writing block.
+		if err := a.ensureScaffoldEnvironment(ctx); err != nil {
+			return err
+		}
+
 		// Prompt for deploy mode (code vs container) for hosted agents.
 		// Code deploy is supported for Python and .NET projects.
 		if _, ok := agentManifest.Template.(agent_yaml.ContainerAgent); ok {
@@ -1566,20 +1574,22 @@ func ensureProject(ctx context.Context, azdClient *azdext.AzdClient) (*azdext.Pr
 	return projectResponse.Project, false, nil
 }
 
-// initializeProjectArtifacts performs the work that ensureProject used to
-// do up front when no azd project existed: scaffold the embedded starter
-// (azure.yaml + infra/**), create the azd environment, load the Azure
-// context, rebuild the credential with the resolved tenant, and re-fetch
-// the project config. It runs inline with the agent download UX so the
-// user sees one continuous "files being written" block.
+// scaffoldStarterFiles writes the embedded starter (azure.yaml +
+// infra/**) when no azd project exists yet, re-fetches the project
+// config, and finishes any deferred absolute --src normalization. It
+// runs inside downloadAgentYaml between manifest validation and the
+// agent sample-file download so the infra and sample writes appear in
+// one continuous UX block.
 //
-// On success a.needsScaffold is cleared so a future re-entry is a no-op.
-func (a *InitAction) initializeProjectArtifacts(ctx context.Context) error {
+// Environment creation is intentionally NOT done here -- it runs later
+// in ensureScaffoldEnvironment so the noisy "New environment 'X' was
+// set as default" line lands AFTER the sample-file "Downloaded to: ..."
+// instead of between the scaffold and the download.
+func (a *InitAction) scaffoldStarterFiles(ctx context.Context) error {
 	if !a.needsScaffold {
 		return nil
 	}
 
-	// 1. Write the embedded starter payload (azure.yaml + infra/**).
 	if err := scaffold.ScaffoldStarter(ctx, a.azdClient, scaffold.StarterOptions{
 		TargetDir: ".",
 		NoPrompt:  a.flags.noPrompt,
@@ -1595,9 +1605,54 @@ func (a *InitAction) initializeProjectArtifacts(ctx context.Context) error {
 		)
 	}
 
-	// 2. Resolve the environment name. Prefer the explicit --environment
-	// value carried from flags; otherwise derive from cwd (matches the
-	// previous "azd init -t ... --environment <name>" behavior).
+	projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
+	if err != nil {
+		return exterrors.Dependency(
+			exterrors.CodeProjectNotFound,
+			fmt.Sprintf("failed to get project after initialization: %s", err),
+			"",
+		)
+	}
+	if projectResponse.Project == nil {
+		return exterrors.Dependency(
+			exterrors.CodeProjectNotFound,
+			"project not found after scaffolding",
+			"",
+		)
+	}
+	a.projectConfig = projectResponse.Project
+
+	// Now that the project exists, finish the absolute --src
+	// normalization that Run() deferred.
+	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
+		relPath, relErr := filepath.Rel(a.projectConfig.Path, a.flags.src)
+		if relErr != nil {
+			return fmt.Errorf("failed to convert src path to relative path: %w", relErr)
+		}
+		a.flags.src = relPath
+	}
+
+	return nil
+}
+
+// ensureScaffoldEnvironment creates the azd environment and loads Azure
+// context for a freshly scaffolded project, rebuilds the credential
+// bound to the resolved tenant, and resets the cached model selector.
+// It is a no-op when the scaffold path did not run (project already
+// existed) or when this helper has already been invoked. On success
+// a.needsScaffold is cleared.
+//
+// Splitting this from scaffoldStarterFiles lets the env-new workflow's
+// "New environment 'X' was set as default" line print AFTER the agent
+// sample-file download instead of between scaffold and download.
+func (a *InitAction) ensureScaffoldEnvironment(ctx context.Context) error {
+	if !a.needsScaffold {
+		return nil
+	}
+
+	// Resolve env name. Prefer the explicit --environment value carried
+	// from flags; otherwise derive from cwd (matches the previous
+	// "azd init -t ... --environment <name>" behavior).
 	envName := a.scaffoldEnvName
 	if envName == "" {
 		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
@@ -1605,8 +1660,6 @@ func (a *InitAction) initializeProjectArtifacts(ctx context.Context) error {
 		}
 	}
 
-	// 3. Create the env via the same "azd env new" helper the other init
-	// paths use. azure.yaml is on disk now, so the workflow succeeds.
 	env, envErr := createNewEnvironment(ctx, a.azdClient, envName)
 	if envErr != nil {
 		return envErr
@@ -1624,9 +1677,6 @@ func (a *InitAction) initializeProjectArtifacts(ctx context.Context) error {
 	// AZURE_RESOURCE_GROUP is already set.
 	ensureResourceGroupName(ctx, a.azdClient, envName, salt)
 
-	// 4. Load whatever Azure context values exist in the new env (mostly
-	// empty at this point) and rebuild the credential bound to the
-	// resolved tenant if one is present.
 	azureContext, ctxErr := loadAzureContext(ctx, a.azdClient, env.Name)
 	if ctxErr != nil {
 		return ctxErr
@@ -1648,37 +1698,7 @@ func (a *InitAction) initializeProjectArtifacts(ctx context.Context) error {
 	}
 	a.credential = credential
 
-	// 5. Re-fetch the project config so downstream code (addToProject,
-	// resolveStartupCommandForInit, etc.) can dereference a.projectConfig
-	// safely.
-	projectResponse, err := a.azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
-	if err != nil {
-		return exterrors.Dependency(
-			exterrors.CodeProjectNotFound,
-			fmt.Sprintf("failed to get project after initialization: %s", err),
-			"",
-		)
-	}
-	if projectResponse.Project == nil {
-		return exterrors.Dependency(
-			exterrors.CodeProjectNotFound,
-			"project not found after scaffolding",
-			"",
-		)
-	}
-	a.projectConfig = projectResponse.Project
-
-	// 6. Now that the project exists, finish the absolute --src
-	// normalization that Run() deferred.
-	if a.flags.src != "" && filepath.IsAbs(a.flags.src) {
-		relPath, relErr := filepath.Rel(a.projectConfig.Path, a.flags.src)
-		if relErr != nil {
-			return fmt.Errorf("failed to convert src path to relative path: %w", relErr)
-		}
-		a.flags.src = relPath
-	}
-
-	// 7. Reset the cached model selector so it picks up the freshly
+	// Reset the cached model selector so it picks up the freshly
 	// populated environment/azure context the next time it is requested.
 	a.models = nil
 
@@ -2500,13 +2520,15 @@ func (a *InitAction) downloadAgentYaml(
 	}
 	a.serviceNameOverride = serviceName
 
-	// Run the deferred starter scaffold + env/context setup now -- after
-	// the manifest is validated and the user has committed to a target
-	// directory, but before any sample files are copied or downloaded.
-	// This puts the infra/azure.yaml writes in the same UX block as the
-	// agent sample downloads instead of as a separate up-front prep step.
+	// Run the deferred starter scaffold now -- after the manifest is
+	// validated and the user has committed to a target directory, but
+	// before any sample files are copied or downloaded. Env creation is
+	// intentionally deferred again (see ensureScaffoldEnvironment) so
+	// the "New environment 'X' was set as default" line lands AFTER the
+	// sample-file "Downloaded to: ..." instead of between the scaffold
+	// and the download.
 	if a.needsScaffold {
-		if err := a.initializeProjectArtifacts(ctx); err != nil {
+		if err := a.scaffoldStarterFiles(ctx); err != nil {
 			return nil, "", err
 		}
 	}
@@ -3217,7 +3239,7 @@ func downloadParentDirectory(
 
 	parentDirPath := strings.Join(pathParts[:len(pathParts)-1], "/")
 	log.Printf("Downloading parent directory '%s' from repository '%s', branch '%s'", parentDirPath, urlInfo.RepoSlug, urlInfo.Branch)
-	fmt.Println(output.WithGrayFormat("Downloading files..."))
+	fmt.Println(output.WithGrayFormat("Downloading sample..."))
 
 	// Download directory contents
 	if useGhCli {
