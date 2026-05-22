@@ -188,7 +188,7 @@ func ScaffoldStarter(ctx context.Context, azdClient *azdext.AzdClient, opts Star
 		confirmResp, err := azdClient.Prompt().Confirm(ctx, &azdext.ConfirmRequest{
 			Options: &azdext.ConfirmOptions{
 				Message:      "Initialize the starter template?",
-				DefaultValue: boolPtr(true),
+				DefaultValue: new(true),
 			},
 		})
 		if err != nil {
@@ -321,5 +321,3 @@ func writeFile(localPath string, content []byte) error {
 	//nolint:gosec // scaffolded files should remain readable by project tooling
 	return os.WriteFile(localPath, content, 0644)
 }
-
-func boolPtr(v bool) *bool { return &v }
