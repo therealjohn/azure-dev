@@ -170,9 +170,10 @@ The `azure.ai.agents` extension reads and writes a number of environment variabl
 | `AZURE_CONTAINER_REGISTRY_RESOURCE_ID` | Azure Container Registry ARM resource ID (the registry endpoint itself is in the core `AZURE_CONTAINER_REGISTRY_ENDPOINT` variable). |
 | `FOUNDRY_PROJECT_ACR_CONNECTION_NAME` | Foundry project connection name pointing at the Container Registry. |
 | `FOUNDRY_PROJECT_CONNECTION_IDS_JSON` | JSON map of connection name to ARM resource ID for every connection declared in `azure.yaml`. |
-| `FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME` | Foundry project connection name for the Storage account (Standard agents only). |
-| `FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME` | Foundry project connection name for the Azure AI Search service (Standard agents only). |
+| `FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME` | Foundry project connection name for the Storage account. Emitted whenever a storage account is provisioned: when `FOUNDRY_NETWORK_MODE=byo-vnet-standard` (Standard data bundle) OR the agent's `azure.yaml` lists `storage` / `azure_ai_search` in its resources (the starter auto-pairs storage with search). |
+| `FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME` | Foundry project connection name for the Azure AI Search service. Emitted whenever an AI Search service is provisioned: in Standard mode OR when the agent manifest declares `kind: tool / id: azure_ai_search`. |
 | `FOUNDRY_PROJECT_COSMOS_CONNECTION_NAME` | Foundry project connection name for the Cosmos DB account (Standard agents only). |
+| `FOUNDRY_PROJECT_BING_CONNECTION_NAME` | Foundry project connection name for the Bing Grounding account. Emitted whenever the agent manifest declares `kind: tool / id: bing_grounding`. |
 
 #### Networking (provisioning outputs)
 
@@ -196,7 +197,7 @@ These variables are set automatically by `azd ai agent init` (or related command
 | `FOUNDRY_PROJECT_DEPLOYMENTS` | JSON-encoded list of model deployments to provision, derived from the agent manifest. Defaults to `[]`. |
 | `FOUNDRY_PROJECT_CONNECTIONS` | JSON-encoded list of connection resources to provision, derived from `azure.yaml`. Defaults to `[]`. |
 | `FOUNDRY_PROJECT_CONNECTION_CREDENTIALS` | JSON-encoded credential map for the connections in `FOUNDRY_PROJECT_CONNECTIONS`. |
-| `FOUNDRY_PROJECT_DEPENDENT_RESOURCES` | JSON-encoded list of dependent Azure resources detected from the agent manifest. |
+| `FOUNDRY_PROJECT_DEPENDENT_RESOURCES` | JSON-encoded list of dependent Azure resources detected from the agent manifest, in the form `[{"resource":"<id>","connectionName":"<name>"}]`. The starter Bicep template recognizes `azure_ai_search` and `bing_grounding`; listing `azure_ai_search` also auto-provisions a Storage account and wires the indexer knowledge container. Other resource values are ignored. |
 | `FOUNDRY_PROJECT_TOOL_CONNECTIONS` | JSON-encoded list of tool-to-connection mappings extracted from the agent manifest. |
 | `AZD_AGENT_SKIP_ACR` | If `true`, signals the Bicep template to skip Azure Container Registry creation. Set automatically by `azd ai agent init` for code-deploy scenarios where no container image is built. Defaults to `false`. |
 | `SKIP_ACCOUNT_CAPABILITY_HOST` | If `true`, skips creating the account-level capability host. Defaults to `false`. |
@@ -222,9 +223,11 @@ These variables are not set automatically; provide them in the azd environment t
 | `FOUNDRY_DISABLE_PUBLIC_NETWORK_ACCESS` | If `true`, disables public network access to the Foundry account. Defaults to `false`. |
 | `FOUNDRY_EXISTING_DNS_ZONES` | JSON object mapping DNS zone names to existing ARM resource IDs to reuse instead of creating new private DNS zones. Defaults to `{}`. |
 | `FOUNDRY_DNS_ZONES_SUBSCRIPTION_ID` | Subscription ID where existing private DNS zones live, if different from the deployment subscription. |
-| `FOUNDRY_PROJECT_STORAGE_RESOURCE_ID` | ARM resource ID of an existing Storage account to reuse for Standard agents. |
-| `FOUNDRY_PROJECT_AISEARCH_RESOURCE_ID` | ARM resource ID of an existing Azure AI Search service to reuse for Standard agents. |
+| `FOUNDRY_PROJECT_STORAGE_RESOURCE_ID` | ARM resource ID of an existing Storage account to reuse. Used when the agent's `azure.yaml` requests storage (directly via `storage` or transitively via `azure_ai_search`), or when `FOUNDRY_NETWORK_MODE=byo-vnet-standard`. Cross-RG / cross-sub safe. |
+| `FOUNDRY_PROJECT_AISEARCH_RESOURCE_ID` | ARM resource ID of an existing Azure AI Search service to reuse. Used when the agent manifest declares `azure_ai_search` or `FOUNDRY_NETWORK_MODE=byo-vnet-standard`. Cross-RG / cross-sub safe. |
 | `FOUNDRY_PROJECT_COSMOSDB_RESOURCE_ID` | ARM resource ID of an existing Cosmos DB account to reuse for Standard agents. |
+| `FOUNDRY_PROJECT_BING_RESOURCE_ID` | ARM resource ID of an existing Microsoft.Bing/accounts (Grounding) account to reuse when the agent manifest declares `bing_grounding`. Cross-RG / cross-sub safe. The deployer must have `listKeys` permission on the existing account because the Foundry connection is created with the account key. |
+| `FOUNDRY_PROJECT_AISEARCH_KNOWLEDGE_CONTAINER_NAME` | Name of the blob container created on the Storage account for AI Search indexer / RAG scenarios. Defaults to `knowledge`. Only used when both `azure_ai_search` and storage are provisioned. |
 
 #### Per-service and host-environment variables
 

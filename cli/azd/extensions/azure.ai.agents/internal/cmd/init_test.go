@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1590,6 +1591,143 @@ func TestConfigureModelChoice_NoPromptMissingAzureContextDefersModelResources(t 
 	}
 	if !strings.Contains(output, "Model resource configuration was deferred") {
 		t.Fatalf("output missing deferred model warning:\n%s", output)
+	}
+}
+
+func TestExtractStarterDependentToolIds(t *testing.T) {
+	t.Parallel()
+
+	mkTool := func(id string) agent_yaml.ToolResource {
+		return agent_yaml.ToolResource{
+			Resource: agent_yaml.Resource{
+				Name: id,
+				Kind: agent_yaml.ResourceKindTool,
+			},
+			Id: id,
+		}
+	}
+
+	tests := []struct {
+		name     string
+		manifest *agent_yaml.AgentManifest
+		expected []string
+	}{
+		{
+			name:     "nil manifest returns nil",
+			manifest: nil,
+			expected: nil,
+		},
+		{
+			name: "nil resources returns nil",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: nil,
+			},
+			expected: nil,
+		},
+		{
+			name: "empty resources returns nil",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{},
+			},
+			expected: nil,
+		},
+		{
+			name: "azure_ai_search alone",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{mkTool("azure_ai_search")},
+			},
+			expected: []string{"azure_ai_search"},
+		},
+		{
+			name: "bing_grounding alone",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{mkTool("bing_grounding")},
+			},
+			expected: []string{"bing_grounding"},
+		},
+		{
+			name: "both, manifest order preserved",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{
+					mkTool("bing_grounding"),
+					mkTool("azure_ai_search"),
+				},
+			},
+			expected: []string{"bing_grounding", "azure_ai_search"},
+		},
+		{
+			name: "storage is NOT auto-injected on the Go side (Bicep auto-pairs with search)",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{
+					mkTool("azure_ai_search"),
+					mkTool("storage"),
+				},
+			},
+			// Only azure_ai_search is returned. `storage` is not in the
+			// starterDependentToolIds set because the starter's main.bicep
+			// auto-pairs a storage account with azure_ai_search whenever
+			// search is requested. If a user authors `storage` as a
+			// separate tool resource it is silently ignored on the Go side
+			// (and also a no-op in Bicep unless it was meant as a
+			// connection resource, not a tool resource).
+			expected: []string{"azure_ai_search"},
+		},
+		{
+			name: "other tool ids are ignored",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{
+					mkTool("code_interpreter"),
+					mkTool("web_search"),
+					mkTool("file_search"),
+				},
+			},
+			expected: nil,
+		},
+		{
+			name: "non-tool resources are ignored",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{
+					agent_yaml.ModelResource{
+						Resource: agent_yaml.Resource{
+							Name: "my-model",
+							Kind: agent_yaml.ResourceKindModel,
+						},
+						Id: "gpt-4o",
+					},
+					agent_yaml.ToolboxResource{
+						Resource: agent_yaml.Resource{
+							Name: "my-toolbox",
+							Kind: agent_yaml.ResourceKindToolbox,
+						},
+						Tools: []any{map[string]any{"type": "azure_ai_search"}},
+					},
+				},
+			},
+			// `azure_ai_search` nested inside a toolbox is NOT picked up
+			// by this function -- only standalone ToolResource entries
+			// with `kind: tool` map to dependent resources.
+			expected: nil,
+		},
+		{
+			name: "duplicates are preserved (caller may dedup)",
+			manifest: &agent_yaml.AgentManifest{
+				Resources: []any{
+					mkTool("azure_ai_search"),
+					mkTool("azure_ai_search"),
+				},
+			},
+			expected: []string{"azure_ai_search", "azure_ai_search"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := extractStarterDependentToolIds(tt.manifest)
+			if !slices.Equal(got, tt.expected) {
+				t.Errorf("extractStarterDependentToolIds() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 

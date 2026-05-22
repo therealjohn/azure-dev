@@ -77,6 +77,12 @@
     "existingCosmosDbAccountResourceId": {
       "value": "${FOUNDRY_PROJECT_COSMOSDB_RESOURCE_ID=}"
     },
+    "existingBingGroundingResourceId": {
+      "value": "${FOUNDRY_PROJECT_BING_RESOURCE_ID=}"
+    },
+    "aiSearchKnowledgeContainerName": {
+      "value": "${FOUNDRY_PROJECT_AISEARCH_KNOWLEDGE_CONTAINER_NAME=knowledge}"
+    },
     "existingDnsZones": {
       "value": "${FOUNDRY_EXISTING_DNS_ZONES={}}"
     },
@@ -100,6 +106,9 @@
     },
     "foundryProjectConnectionCredentialsJson": {
       "value": "${FOUNDRY_PROJECT_CONNECTION_CREDENTIALS}"
+    },
+    "foundryProjectDependentResourcesJson": {
+      "value": "${FOUNDRY_PROJECT_DEPENDENT_RESOURCES=[]}"
     },
     "existingAcrConnectionName": {
       "value": "${FOUNDRY_PROJECT_ACR_CONNECTION_NAME=}"

@@ -64,7 +64,7 @@ type DeveloperRBACResult struct {
 	PrincipalDisplay string
 
 	// HasSufficientAIRole is true when the principal has at least
-	// one of `sufficientAIUserRoles` (Owner, Contributor, Azure AI
+	// one of `sufficientFoundryUserRoles` (Owner, Contributor, Azure AI
 	// User, Azure AI Developer) on the project scope.
 	HasSufficientAIRole bool
 
@@ -144,7 +144,7 @@ func QueryDeveloperRBAC(
 	}
 
 	hasRole, err := hasAnyRoleAssignment(
-		ctx, cred, userProfile.Id, sufficientAIUserRoles, info.ProjectScope)
+		ctx, cred, userProfile.Id, sufficientFoundryUserRoles, info.ProjectScope)
 	if err != nil {
 		return nil, fmt.Errorf("list role assignments: %w", err)
 	}

@@ -98,6 +98,12 @@ param existingAiSearchResourceId string = ''
 @description('Optional. Full ARM resource ID of an existing Cosmos DB account. Cross-RG / cross-sub safe.')
 param existingCosmosDbAccountResourceId string = ''
 
+@description('Optional. Full ARM resource ID of an existing Microsoft.Bing/accounts (Grounding) account. Cross-RG / cross-sub safe. Caller must have listKeys permission on the existing account.')
+param existingBingGroundingResourceId string = ''
+
+@description('Name of the blob container created on the storage account for AI Search indexer / knowledge scenarios. Only used when both azure_ai_search and storage are provisioned.')
+param aiSearchKnowledgeContainerName string = 'knowledge'
+
 @description('Map of existing private DNS zone FQDN -> resource group name. Empty value means create new in this RG.')
 param existingDnsZones object = {}
 
@@ -115,6 +121,9 @@ param foundryProjectConnectionsJson string = '[]'
 @description('Connection credentials (JSON map from azure.yaml)')
 #disable-next-line secure-parameter-default
 param foundryProjectConnectionCredentialsJson string = '{}'
+
+@description('Dependent resources (JSON array from azure.yaml). Each entry is {"resource":"<name>","connectionName":"<name>"}. Recognized resource values: "azure_ai_search", "bing_grounding", "storage". Entries with other resource values are ignored. When "azure_ai_search" is present, a storage account is auto-provisioned (or reused via existingStorageAccountResourceId) and the search-MI -> storage knowledge container + RBAC are wired up.')
+param foundryProjectDependentResourcesJson string = '[]'
 
 // Existing resource detection (set by extension when reusing resources)
 @description('Existing ACR connection name on the Foundry project. If set, ACR creation is skipped.')
@@ -171,10 +180,78 @@ var resolvedSkipAccountCapHost = skipAccountCapabilityHost || (resolvedUseExisti
 var isByoVnet = startsWith(foundryNetworkMode, 'byo-vnet')
 var isStandard = foundryNetworkMode == 'byo-vnet-standard'
 
+// Standard mode (`byo-vnet-standard`) provisions the full data bundle
+// (storage + search + cosmos + cap-host wiring). Skipped for existing
+// projects: existing projects with Standard are expected to already
+// have data + connections + cap host wired up; running these modules
+// would risk PUT conflicts on connections or cap host.
+var provisionStandard = isStandard && !useExistingFoundryProject
+
 // Standard data connection names (deterministic per RG/location, like other modules use)
 var storageConnectionName = 'storage-${resourceToken}'
 var foundrySearchConnectionName = 'aisearch-${resourceToken}'
 var cosmosConnectionName = 'cosmos-${resourceToken}'
+var bingConnectionName = 'bing-${resourceToken}'
+
+// ─────────────────────────────────────────────────────────────────────
+// Dependent resources -- per-tool provisioning gates.
+//
+// Today the extension produces an entry like:
+//   [{"resource":"azure_ai_search","connectionName":"search"}]
+// when the agent manifest declares `kind: tool / id: azure_ai_search`
+// (or `bing_grounding`). Listing `azure_ai_search` also auto-provisions
+// storage + the knowledge container + the search-MI -> storage RBAC.
+//
+// In Standard mode (`byo-vnet-standard`) the full data bundle is
+// provisioned regardless of this list. The two gates compose via OR.
+// ─────────────────────────────────────────────────────────────────────
+
+var dependentResources = json(foundryProjectDependentResourcesJson)
+var searchDependentEntries = filter(dependentResources, r => r.resource == 'azure_ai_search')
+var storageDependentEntries = filter(dependentResources, r => r.resource == 'storage')
+var bingDependentEntries = filter(dependentResources, r => r.resource == 'bing_grounding')
+
+var requestsAiSearch = !empty(searchDependentEntries)
+var requestsStorage = !empty(storageDependentEntries)
+var requestsBingGrounding = !empty(bingDependentEntries)
+
+// Compose with Standard mode (Standard provisions search + storage + cosmos
+// together for the cap-host bundle). Storage is also implied by search
+// because the auto-paired knowledge container needs a storage account.
+var provisionAiSearch = provisionStandard || requestsAiSearch
+var provisionStorage = provisionStandard || requestsStorage || requestsAiSearch
+var provisionBingGrounding = requestsBingGrounding
+
+// Resolved connection names: manifest-supplied connectionName wins when
+// non-empty; deterministic name is the fallback. Resolved once here so
+// every consumer (the data modules, project-cap-host, outputs) reads the
+// same value. `first()` is only called when the matching `requests*`
+// flag is true so it never runs on an empty array.
+var resolvedSearchConnectionName = requestsAiSearch && !empty(first(searchDependentEntries).?connectionName)
+  ? first(searchDependentEntries).connectionName
+  : foundrySearchConnectionName
+var resolvedStorageConnectionName = requestsStorage && !empty(first(storageDependentEntries).?connectionName)
+  ? first(storageDependentEntries).connectionName
+  : storageConnectionName
+var resolvedBingConnectionName = requestsBingGrounding && !empty(first(bingDependentEntries).?connectionName)
+  ? first(bingDependentEntries).connectionName
+  : bingConnectionName
+
+// Pre-resolve storage and search sub/RG so the cross-scope `ai-search-knowledge`
+// module can target the correct deployment scope. Module scopes must be
+// known at the start of deployment (BCP120) -- they cannot reference
+// outputs from other modules. The values mirror the logic inside
+// `storage.bicep` / `ai-search.bicep`: BYO ARM ID -> parse the sub/RG
+// from the ID; new -> current sub/RG.
+var hasExistingStorage = !empty(existingStorageAccountResourceId)
+var existingStorageParts = split(existingStorageAccountResourceId, '/')
+var resolvedStorageSubscriptionId = hasExistingStorage ? existingStorageParts[2] : subscription().subscriptionId
+var resolvedStorageResourceGroupName = hasExistingStorage ? existingStorageParts[4] : resourceGroupName
+
+var hasExistingSearch = !empty(existingAiSearchResourceId)
+var existingSearchParts = split(existingAiSearchResourceId, '/')
+var resolvedSearchSubscriptionId = hasExistingSearch ? existingSearchParts[2] : subscription().subscriptionId
+var resolvedSearchResourceGroupName = hasExistingSearch ? existingSearchParts[4] : resourceGroupName
 
 resource rg 'Microsoft.Resources/resourceGroups@2025-04-01' = {
   name: resourceGroupName
@@ -280,14 +357,13 @@ module foundryProject './modules/ai-project.bicep' = {
 
 // ─────────────────────────────────────────────────────────────────────
 // Standard data resources (must come after the project so we have projectPrincipalId).
-// Skipped for existing projects: existing projects with Standard are expected
-// to already have data + connections + cap host wired up; running these
-// modules would risk PUT conflicts on connections or cap host.
+// Standard mode provisions storage + search + cosmos as a bundle; the
+// individual `provisionStorage` / `provisionAiSearch` / `provisionBingGrounding`
+// gates above also allow agent-manifest dependent resources to pull in
+// these modules outside of Standard mode.
 // ─────────────────────────────────────────────────────────────────────
 
-var provisionStandard = isStandard && !useExistingFoundryProject
-
-module storageStandard './modules/storage.bicep' = if (provisionStandard) {
+module storageStandard './modules/storage.bicep' = if (provisionStorage) {
   scope: rg
   name: 'storage-standard'
   params: {
@@ -298,13 +374,13 @@ module storageStandard './modules/storage.bicep' = if (provisionStandard) {
     projectPrincipalId: foundryProject.outputs.projectPrincipalId
     principalId: principalId
     principalType: principalType
-    connectionName: storageConnectionName
+    connectionName: resolvedStorageConnectionName
     existingStorageAccountResourceId: existingStorageAccountResourceId
     disablePublicNetworkAccess: disablePublicNetworkAccess
   }
 }
 
-module foundrySearch './modules/ai-search.bicep' = if (provisionStandard) {
+module foundrySearch './modules/ai-search.bicep' = if (provisionAiSearch) {
   scope: rg
   name: 'ai-search-standard'
   params: {
@@ -315,9 +391,30 @@ module foundrySearch './modules/ai-search.bicep' = if (provisionStandard) {
     projectPrincipalId: foundryProject.outputs.projectPrincipalId
     principalId: principalId
     principalType: principalType
-    connectionName: foundrySearchConnectionName
+    connectionName: resolvedSearchConnectionName
     existingSearchServiceResourceId: existingAiSearchResourceId
     disablePublicNetworkAccess: disablePublicNetworkAccess
+  }
+}
+
+// Auto-paired with azure_ai_search: create the knowledge container + grant
+// the search MI Blob Data Reader on the storage account so indexer / RAG
+// scenarios work out of the box. The module is invoked in the storage
+// account's RG scope (cross-RG / cross-sub safe) and references the
+// search service via its own subscription/RG. Scope values are derived
+// from params (not from `storageStandard.outputs.*`) because module
+// scopes must be known at the start of deployment (BCP120).
+module aiSearchKnowledge './modules/ai-search-knowledge.bicep' = if (provisionAiSearch && provisionStorage) {
+  scope: resourceGroup(resolvedStorageSubscriptionId, resolvedStorageResourceGroupName)
+  name: 'ai-search-knowledge'
+  params: {
+    #disable-next-line BCP318
+    storageAccountName: storageStandard.outputs.accountName
+    searchServiceSubscriptionId: resolvedSearchSubscriptionId
+    searchServiceResourceGroupName: resolvedSearchResourceGroupName
+    #disable-next-line BCP318
+    searchServiceName: foundrySearch.outputs.serviceName
+    knowledgeContainerName: aiSearchKnowledgeContainerName
   }
 }
 
@@ -379,14 +476,30 @@ module cosmosRbacPre './modules/cosmos-rbac-pre.bicep' = if (provisionStandard) 
 // Project-scoped capability host (Standard only). Created AFTER project + all
 // data connections + pre-cap-host RBAC + data PE/DNS. Honours enableCapabilityHost
 // (extension sets ENABLE_CAPABILITY_HOST=false when it manages cap host itself).
+// Bing Grounding (optional; gated on agent.yaml listing bing_grounding in
+// dependent resources). Independent of Standard mode -- bing isn't part of
+// the cap-host data bundle.
+module bingGrounding './modules/bing-grounding.bicep' = if (provisionBingGrounding) {
+  scope: rg
+  name: 'bing-grounding'
+  params: {
+    tags: tags
+    foundryAccountName: foundryAccount.outputs.accountName
+    foundryProjectName: foundryProject.outputs.projectName
+    projectPrincipalId: foundryProject.outputs.projectPrincipalId
+    connectionName: resolvedBingConnectionName
+    existingBingGroundingResourceId: existingBingGroundingResourceId
+  }
+}
+
 module projectCapHost './modules/project-cap-host.bicep' = if (provisionStandard && enableCapabilityHost) {
   scope: rg
   name: 'project-cap-host'
   params: {
     foundryAccountName: foundryAccount.outputs.accountName
     foundryProjectName: foundryProject.outputs.projectName
-    foundrySearchConnectionName: foundrySearchConnectionName
-    storageConnectionName: storageConnectionName
+    foundrySearchConnectionName: resolvedSearchConnectionName
+    storageConnectionName: resolvedStorageConnectionName
     cosmosDbConnectionName: cosmosConnectionName
   }
   dependsOn: [
@@ -488,10 +601,15 @@ output AZURE_AGENT_SUBNET_ID string = isByoVnet ? vnet.outputs.agentSubnetId : '
 output AZURE_PE_SUBNET_ID string = isByoVnet ? vnet.outputs.peSubnetId : ''
 
 // Standard data resources
-// Standard data resources (only emitted when isStandard AND a new project was provisioned).
+// Emitted whenever the corresponding service is provisioned. Today that's
+// either Standard mode (`byo-vnet-standard`) OR the agent's azure.yaml
+// dependent resources listed the service. External scripts that need to
+// detect Standard mode specifically should read FOUNDRY_NETWORK_MODE.
 #disable-next-line BCP318
-output FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME string = provisionStandard ? storageStandard.outputs.connectionName : ''
+output FOUNDRY_PROJECT_STORAGE_CONNECTION_NAME string = provisionStorage ? storageStandard.outputs.connectionName : ''
 #disable-next-line BCP318
-output FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME string = provisionStandard ? foundrySearch.outputs.connectionName : ''
+output FOUNDRY_PROJECT_AISEARCH_CONNECTION_NAME string = provisionAiSearch ? foundrySearch.outputs.connectionName : ''
 #disable-next-line BCP318
 output FOUNDRY_PROJECT_COSMOS_CONNECTION_NAME string = provisionStandard ? cosmos.outputs.connectionName : ''
+#disable-next-line BCP318
+output FOUNDRY_PROJECT_BING_CONNECTION_NAME string = provisionBingGrounding ? bingGrounding.outputs.connectionName : ''

@@ -2683,34 +2683,31 @@ func (a *InitAction) addToProject(ctx context.Context, targetDir string, agentMa
 	resourceDetails := []project.Resource{}
 	switch agentDef.Kind {
 	case agent_yaml.AgentKindHosted:
-		// Handle tool resources that require connection names
-		if agentManifest.Resources != nil {
-			for _, resource := range agentManifest.Resources {
-				// Try to cast to ToolResource
-				if toolResource, ok := resource.(agent_yaml.ToolResource); ok {
-					// Check if this is a resource that requires a connection name
-					if toolResource.Id == "bing_grounding" || toolResource.Id == "azure_ai_search" {
-						// Prompt the user for a connection name
-						resp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-							Options: &azdext.PromptOptions{
-								Message:        fmt.Sprintf("Enter a connection name for adding the resource %s to your Microsoft Foundry project", toolResource.Id),
-								IgnoreHintKeys: true,
-								DefaultValue:   toolResource.Id,
-							},
-						})
-						if err != nil {
-							return fmt.Errorf("prompting for connection name for %s: %w", toolResource.Id, err)
-						}
-
-						// Add to resource details
-						resourceDetails = append(resourceDetails, project.Resource{
-							Resource:       toolResource.Id,
-							ConnectionName: resp.Value,
-						})
-					}
-				}
-				// Skip the resource if the cast fails
+		// Handle tool resources that require connection names. Each
+		// `project.Resource` entry is serialized to the
+		// `FOUNDRY_PROJECT_DEPENDENT_RESOURCES` environment variable
+		// (see `internal/cmd/listen.go.resourcesEnvUpdate`). The embedded
+		// starter Bicep template reads that env var via
+		// `foundryProjectDependentResourcesJson` in `main.bicep` and
+		// provisions / wires up the corresponding resources -- AI Search,
+		// Bing Grounding, and (when paired with AI Search) Storage +
+		// the indexer knowledge container.
+		for _, toolId := range extractStarterDependentToolIds(agentManifest) {
+			resp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
+				Options: &azdext.PromptOptions{
+					Message:        fmt.Sprintf("Enter a connection name for adding the resource %s to your Microsoft Foundry project", toolId),
+					IgnoreHintKeys: true,
+					DefaultValue:   toolId,
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("prompting for connection name for %s: %w", toolId, err)
 			}
+
+			resourceDetails = append(resourceDetails, project.Resource{
+				Resource:       toolId,
+				ConnectionName: resp.Value,
+			})
 		}
 
 		// Use container settings that were already populated before writing agent.yaml
@@ -3442,6 +3439,44 @@ func downloadDirectoryContentsWithoutGhCli(
 	}
 
 	return nil
+}
+
+// starterDependentToolIds enumerates the tool ids declared via
+// `kind: tool / id: <id>` in `agent.manifest.yaml` that the embedded
+// starter Bicep template knows how to provision via the
+// `FOUNDRY_PROJECT_DEPENDENT_RESOURCES` env var
+// (see resources/starter/infra/main.bicep). Listing a tool id here
+// is a contract with the starter -- the starter must have a gated
+// module call that reads the same id from
+// `foundryProjectDependentResourcesJson`. Storage is NOT in this list
+// because the starter auto-pairs storage with azure_ai_search; the
+// extension never needs to author a `storage` entry on the Go side.
+var starterDependentToolIds = map[string]struct{}{
+	"azure_ai_search": {},
+	"bing_grounding":  {},
+}
+
+// extractStarterDependentToolIds returns the tool ids from the agent
+// manifest's `resources:` list that the embedded starter Bicep
+// template knows how to provision as dependent resources. Order is
+// preserved from the manifest. Duplicates are NOT deduplicated; the
+// caller is responsible for any dedup it needs.
+func extractStarterDependentToolIds(manifest *agent_yaml.AgentManifest) []string {
+	if manifest == nil || manifest.Resources == nil {
+		return nil
+	}
+
+	var ids []string
+	for _, resource := range manifest.Resources {
+		toolResource, ok := resource.(agent_yaml.ToolResource)
+		if !ok {
+			continue
+		}
+		if _, ok := starterDependentToolIds[toolResource.Id]; ok {
+			ids = append(ids, toolResource.Id)
+		}
+	}
+	return ids
 }
 
 // extractToolboxAndConnectionConfigs extracts toolbox resource definitions from the agent manifest
