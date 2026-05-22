@@ -1,5 +1,11 @@
 # Release History
 
+## Unreleased
+
+- [[#8331]](https://github.com/Azure/azure-dev/issues/8331) Fix `azd ai agent init --no-prompt` so it always produces a valid `azure.yaml` and azd environment when `AZURE_SUBSCRIPTION_ID` or `AZURE_LOCATION` are not set. Missing Azure context is now deferred and surfaced as a single next-steps warning block instead of failing init. Model deployment metadata is resolved non-interactively from the Azure model catalog when sub/location are set, or defers `version` with a clear next-steps entry otherwise.
+- [[#8331]](https://github.com/Azure/azure-dev/issues/8331) Add `azd ai agent model set <model>` subcommand for non-interactively updating an existing agent's model deployment (version, SKU, capacity, format). Intended for coding agents and CI pipelines that ran `init --no-prompt` and need to backfill model metadata after setting `AZURE_SUBSCRIPTION_ID`/`AZURE_LOCATION`.
+- Extend the agent manifest `ModelResource` schema with optional `version`, `sku`, `capacity`, and `format` fields. Hand-authored manifests can now pin deployment metadata; init/templates can leave them empty and inherit defaults (`Format=OpenAI`, `Sku=GlobalStandard`, `Capacity=10`).
+
 ## 0.1.33-preview (2026-05-21)
 
 - [[#8299]](https://github.com/Azure/azure-dev/pull/8299) Don't fail `azd ai agent init` when Foundry agent existence checks error.

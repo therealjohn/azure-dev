@@ -39,6 +39,12 @@ type InitFromCodeAction struct {
 	deploymentDetails []project.Deployment
 	needsProvision    bool
 	httpClient        *http.Client
+
+	// deferred tracks Azure-context items that were skipped during a
+	// `--no-prompt` run (subscription, location, Foundry project, model
+	// deployment). It is emitted as a single warning block at the end of
+	// Run so headless callers learn what to set before `azd up`.
+	deferred deferredAzureConfig
 }
 
 // templateFileInfo represents a file from the GitHub template repository.
@@ -147,6 +153,12 @@ func (a *InitFromCodeAction) Run(ctx context.Context) error {
 		validatePostInit(srcDir, localDefinition.CodeConfiguration)
 
 		fmt.Println("\nYou can customize environment variables and other settings in the agent.yaml.")
+
+		// Surface any deferred Azure configuration before the "Next steps" hint
+		// so headless callers see what to set (subscription, location, etc.)
+		// before they run `azd up`.
+		a.deferred.Emit()
+
 		if projectID, _ := a.azdClient.Environment().GetValue(ctx, &azdext.GetEnvRequest{
 			EnvName: a.environment.Name,
 			Key:     "AZURE_AI_PROJECT_ID",
@@ -529,26 +541,64 @@ func (a *InitFromCodeAction) createDefinitionFromLocalAgent(ctx context.Context)
 		}
 		a.azureContext.Scope.SubscriptionId = projectDetails.SubscriptionId
 
-		newCred, err := ensureSubscription(
+		newCred, subDeferred, err := tryEnsureSubscription(
 			ctx, a.azdClient, a.azureContext, a.environment.Name,
 			"Select an Azure subscription to find existing Foundry projects.",
+			a.flags.noPrompt,
 		)
 		if err != nil {
 			return nil, err
 		}
-		a.credential = newCred
+		if subDeferred {
+			a.deferred.Add(deferredSubscriptionID)
+			a.deferred.Add(deferredFoundryProject)
+		} else {
+			a.credential = newCred
 
-		proj, err := selectFoundryProject(ctx, a.azdClient, a.credential, a.azureContext, a.environment.Name, a.azureContext.Scope.SubscriptionId, a.flags.projectResourceId, deployMode == "code")
+			proj, err := selectFoundryProject(
+				ctx, a.azdClient, a.credential, a.azureContext, a.environment.Name,
+				a.azureContext.Scope.SubscriptionId, a.flags.projectResourceId, deployMode == "code",
+			)
+			if err != nil {
+				return nil, err
+			}
+			if proj == nil {
+				return nil, fmt.Errorf(
+					"specified foundry project was not found or is not eligible for the current configuration: %s",
+					a.flags.projectResourceId,
+				)
+			}
+			selectedProject = proj
+
+			if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true"); err != nil {
+				return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+			}
+		}
+	} else if a.flags.noPrompt {
+		// No --project-id and we cannot prompt: take the "create new" branch
+		// unconditionally so init can still produce a valid azure.yaml.
+		if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "false"); err != nil {
+			return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+		}
+
+		newCred, subDeferred, locDeferred, err := tryEnsureSubscriptionAndLocation(
+			ctx, a.azdClient, a.azureContext, a.environment.Name,
+			"Select an Azure subscription to look up available models and provision your Foundry project resources.",
+			a.flags.noPrompt,
+		)
 		if err != nil {
 			return nil, err
 		}
-		if proj == nil {
-			return nil, fmt.Errorf("specified foundry project was not found or is not eligible for the current configuration: %s", a.flags.projectResourceId)
+		if subDeferred {
+			a.deferred.Add(deferredSubscriptionID)
 		}
-		selectedProject = proj
-
-		if err := setEnvValue(ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true"); err != nil {
-			return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+		if locDeferred {
+			a.deferred.Add(deferredLocation)
+		}
+		if subDeferred || locDeferred {
+			a.deferred.Add(deferredFoundryProject)
+		} else {
+			a.credential = newCred
 		}
 	} else {
 		projectChoices := []*azdext.SelectChoice{
@@ -620,35 +670,44 @@ func (a *InitFromCodeAction) createDefinitionFromLocalAgent(ctx context.Context)
 	}
 
 	// Step 2: Model configuration
-	var modelConfigChoices []*azdext.SelectChoice
-	if selectedProject != nil {
-		modelConfigChoices = []*azdext.SelectChoice{
-			{Label: "Use an existing model deployment", Value: "existing"},
-			{Label: "Deploy a new model from the catalog", Value: "new"},
-			{Label: "Skip model configuration", Value: "skip"},
-		}
+	// In --no-prompt mode (or when subscription/location were deferred above)
+	// we cannot run the interactive Select(); default to "skip" so no model
+	// resource is added to the generated agent.yaml. The user can re-run
+	// `azd ai agent init` interactively later, or hand-edit the manifest.
+	var modelConfigChoice string
+	if a.flags.noPrompt {
+		modelConfigChoice = "skip"
 	} else {
-		modelConfigChoices = []*azdext.SelectChoice{
-			{Label: "Deploy a new model from the catalog", Value: "new"},
-			{Label: "Skip model configuration", Value: "skip"},
+		var modelConfigChoices []*azdext.SelectChoice
+		if selectedProject != nil {
+			modelConfigChoices = []*azdext.SelectChoice{
+				{Label: "Use an existing model deployment", Value: "existing"},
+				{Label: "Deploy a new model from the catalog", Value: "new"},
+				{Label: "Skip model configuration", Value: "skip"},
+			}
+		} else {
+			modelConfigChoices = []*azdext.SelectChoice{
+				{Label: "Deploy a new model from the catalog", Value: "new"},
+				{Label: "Skip model configuration", Value: "skip"},
+			}
 		}
-	}
 
-	defaultIndex := int32(0)
-	modelConfigResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
-		Options: &azdext.SelectOptions{
-			Message:       "How would you like to configure model(s) for your agent?",
-			Choices:       modelConfigChoices,
-			SelectedIndex: &defaultIndex,
-		},
-	})
-	if err != nil {
-		if exterrors.IsCancellation(err) {
-			return nil, exterrors.Cancelled("model configuration choice was cancelled")
+		defaultIndex := int32(0)
+		modelConfigResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+			Options: &azdext.SelectOptions{
+				Message:       "How would you like to configure model(s) for your agent?",
+				Choices:       modelConfigChoices,
+				SelectedIndex: &defaultIndex,
+			},
+		})
+		if err != nil {
+			if exterrors.IsCancellation(err) {
+				return nil, exterrors.Cancelled("model configuration choice was cancelled")
+			}
+			return nil, fmt.Errorf("failed to prompt for model configuration choice: %w", err)
 		}
-		return nil, fmt.Errorf("failed to prompt for model configuration choice: %w", err)
+		modelConfigChoice = modelConfigChoices[*modelConfigResp.Value].Value
 	}
-	modelConfigChoice := modelConfigChoices[*modelConfigResp.Value].Value
 
 	var selectedModel *azdext.AiModel
 	var existingDeployment *FoundryDeploymentInfo
@@ -677,7 +736,7 @@ func (a *InitFromCodeAction) createDefinitionFromLocalAgent(ctx context.Context)
 		if deployment != nil {
 			existingDeployment = deployment
 		} else {
-			// User wants to create a new deployment — region locked to the project's location
+			// User wants to create a new deployment -- region locked to the project's location
 			selectedModel, err = selectNewModel(ctx, a.azdClient, a.azureContext, a.flags.model)
 			if err != nil {
 				return nil, fmt.Errorf("failed to select new model: %w", err)

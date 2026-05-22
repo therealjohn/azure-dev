@@ -36,6 +36,8 @@ const (
 	CodeModelDeploymentNotFound   = "model_deployment_not_found"
 	CodeConflictingArguments      = "conflicting_arguments"
 	CodeInvalidPositionalArg      = "invalid_positional_arg"
+	CodeModelResourceNotFound     = "model_resource_not_found"
+	CodeModelVersionRequired      = "model_version_required"
 )
 
 // Error codes commonly used for dependency errors.

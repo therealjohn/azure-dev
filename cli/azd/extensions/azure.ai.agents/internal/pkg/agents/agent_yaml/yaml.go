@@ -646,10 +646,29 @@ type Resource struct {
 	Kind ResourceKind `json:"kind" yaml:"kind"`
 }
 
-// ModelResource Represents a model resource required by the agent
+// ModelResource Represents a model resource required by the agent.
+//
+// Id is the model name (e.g. "gpt-4o-mini").
+//
+// Version, Sku, Capacity, and Format are optional. When omitted, init applies
+// defaults during ProcessModels:
+//   - Format defaults to "OpenAI"
+//   - Sku defaults to "GlobalStandard"
+//   - Capacity defaults to 10
+//   - Version is filled from the Azure model catalog when subscription and
+//     location are resolved; otherwise it is left empty and the user is
+//     directed to `azd ai agent model set <model> --version <v>` before
+//     provisioning.
+//
+// Hand-authored manifests can pin specific values to override these defaults;
+// init-generated manifests typically leave them empty so defaults apply.
 type ModelResource struct {
 	Resource `json:",inline" yaml:",inline"`
 	Id       string `json:"id" yaml:"id"`
+	Version  string `json:"version,omitempty" yaml:"version,omitempty"`
+	Sku      string `json:"sku,omitempty" yaml:"sku,omitempty"`
+	Capacity int    `json:"capacity,omitempty" yaml:"capacity,omitempty"`
+	Format   string `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
 // ToolResource Represents a tool resource required by the agent

@@ -851,6 +851,117 @@ func ensureSubscriptionAndLocation(
 	return newCredential, nil
 }
 
+// tryEnsureSubscription is the no-prompt-aware wrapper around ensureSubscription.
+//
+// When noPrompt is false, it delegates to ensureSubscription and the returned
+// deferred flag is always false.
+//
+// When noPrompt is true and azureContext.Scope.SubscriptionId is empty, the
+// caller has no way to pick a subscription interactively, so the helper signals
+// "deferred" (returns deferred=true, err=nil) instead of erroring. The caller
+// is expected to skip subscription-dependent work and emit a next-steps
+// warning telling the user to run `azd env set AZURE_SUBSCRIPTION_ID <id>`.
+//
+// When noPrompt is true but a subscription is already known (e.g. loaded from
+// the environment or extracted from --project-id), the helper delegates to
+// ensureSubscription which will resolve the tenant and refresh the credential
+// without prompting.
+func tryEnsureSubscription(
+	ctx context.Context,
+	azdClient *azdext.AzdClient,
+	azureContext *azdext.AzureContext,
+	envName string,
+	promptMessage string,
+	noPrompt bool,
+) (azcore.TokenCredential, bool, error) {
+	if noPrompt && azureContext.Scope.SubscriptionId == "" {
+		return nil, true, nil
+	}
+
+	cred, err := ensureSubscription(ctx, azdClient, azureContext, envName, promptMessage)
+	if err != nil {
+		return nil, false, err
+	}
+	return cred, false, nil
+}
+
+// tryEnsureLocation is the no-prompt-aware wrapper around ensureLocation.
+//
+// When noPrompt is false, it delegates to ensureLocation and the returned
+// deferred flag is always false.
+//
+// When noPrompt is true and AZURE_LOCATION is unset, it signals deferral
+// (deferred=true, err=nil) so the caller can skip location-dependent work and
+// surface a next-steps warning.
+//
+// When noPrompt is true and AZURE_LOCATION is set but not in the supported
+// regions list, the helper returns a structured validation error -- this is
+// not a "missing env var" deferral case but a real user error that should
+// fail loudly and tell the user to pick a supported region.
+func tryEnsureLocation(
+	ctx context.Context,
+	azdClient *azdext.AzdClient,
+	azureContext *azdext.AzureContext,
+	envName string,
+	noPrompt bool,
+) (bool, error) {
+	if !noPrompt {
+		return false, ensureLocation(ctx, azdClient, azureContext, envName)
+	}
+
+	if azureContext.Scope.Location == "" {
+		return true, nil
+	}
+
+	allowedLocations, err := supportedRegionsForInit(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !locationAllowed(azureContext.Scope.Location, allowedLocations) {
+		return false, exterrors.Validation(
+			exterrors.CodeLocationMismatch,
+			fmt.Sprintf(
+				"AZURE_LOCATION '%s' is not a supported region for this agent setup.",
+				azureContext.Scope.Location,
+			),
+			"set AZURE_LOCATION to a supported region "+
+				"(`azd env set AZURE_LOCATION <region>`) and retry",
+		)
+	}
+
+	// Existing location is supported; ensureLocation will not prompt.
+	return false, ensureLocation(ctx, azdClient, azureContext, envName)
+}
+
+// tryEnsureSubscriptionAndLocation chains tryEnsureSubscription and
+// tryEnsureLocation. It returns the (possibly refreshed) credential and two
+// independent deferral flags so the caller can include only the missing values
+// in the next-steps warning. If credential refresh succeeds for the
+// subscription but the location call fails with a real error, the credential
+// is returned unchanged so the caller can decide whether to keep using it.
+func tryEnsureSubscriptionAndLocation(
+	ctx context.Context,
+	azdClient *azdext.AzdClient,
+	azureContext *azdext.AzureContext,
+	envName string,
+	subscriptionMessage string,
+	noPrompt bool,
+) (azcore.TokenCredential, bool, bool, error) {
+	cred, subDeferred, err := tryEnsureSubscription(
+		ctx, azdClient, azureContext, envName, subscriptionMessage, noPrompt,
+	)
+	if err != nil {
+		return nil, false, false, err
+	}
+
+	locDeferred, err := tryEnsureLocation(ctx, azdClient, azureContext, envName, noPrompt)
+	if err != nil {
+		return cred, subDeferred, false, err
+	}
+
+	return cred, subDeferred, locDeferred, nil
+}
+
 func normalizeLocationName(location string) string {
 	return strings.TrimSpace(strings.ToLower(location))
 }

@@ -90,6 +90,12 @@ type InitAction struct {
 	isCodeDeploy        bool // true when user selects code deploy mode; skips ACR config
 	httpClient          *http.Client
 	serviceNameOverride string // when set, addToProject uses this instead of the manifest name
+
+	// deferred tracks Azure-context items that were skipped during a
+	// `--no-prompt` run (subscription, location, Foundry project, model
+	// deployment). It is emitted as a single warning block at the end of
+	// Run so headless callers learn what to set before `azd up`.
+	deferred deferredAzureConfig
 }
 
 // modelSelector encapsulates the dependencies needed for model selection and
@@ -1039,6 +1045,12 @@ func (a *InitAction) Run(ctx context.Context) error {
 		}
 
 		color.Green("\nAI agent definition added to your azd project successfully!")
+
+		// Surface any deferred Azure configuration (missing subscription /
+		// location / Foundry project / model deployment) as a single
+		// next-steps block so headless callers learn what to set before
+		// running `azd up`.
+		a.deferred.Emit()
 	}
 
 	return nil
@@ -1201,12 +1213,18 @@ func (a *InitAction) configureModelChoice(
 	// and configure Foundry env vars (ACR, AppInsights, etc.) instead of prompting.
 	if !manifestHasModelResources(agentManifest) {
 		if a.flags.projectResourceId != "" {
-			newCred, err := ensureSubscription(
+			newCred, subDeferred, err := tryEnsureSubscription(
 				ctx, a.azdClient, a.azureContext, a.environment.Name,
 				"Select an Azure subscription to provision your agent and Foundry project resources.",
+				a.flags.noPrompt,
 			)
 			if err != nil {
 				return nil, err
+			}
+			if subDeferred {
+				a.deferred.Add(deferredSubscriptionID)
+				a.deferred.Add(deferredFoundryProject)
+				return agentManifest, nil
 			}
 			a.credential = newCred
 
@@ -1228,6 +1246,39 @@ func (a *InitAction) configureModelChoice(
 				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true",
 			); err != nil {
 				return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+			}
+		} else if a.flags.noPrompt {
+			// --no-prompt with no --project-id and no AZURE_AI_PROJECT_ID:
+			// take the "create new" branch unconditionally. We can't drive the
+			// interactive Select(), and we don't have enough info to pick an
+			// existing project automatically.
+			a.deferred.Add(deferredFoundryProject)
+
+			// Creating new resources -- clear any stale existing-project flag
+			// even when subscription/location are deferred, so a later run
+			// doesn't inherit a flipped value.
+			if err := setEnvValue(
+				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "false",
+			); err != nil {
+				return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+			}
+
+			newCred, subDeferred, locDeferred, err := tryEnsureSubscriptionAndLocation(
+				ctx, a.azdClient, a.azureContext, a.environment.Name,
+				"Select an Azure subscription to provision your agent and Foundry project resources.",
+				a.flags.noPrompt,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if subDeferred {
+				a.deferred.Add(deferredSubscriptionID)
+			}
+			if locDeferred {
+				a.deferred.Add(deferredLocation)
+			}
+			if newCred != nil {
+				a.credential = newCred
 			}
 		} else {
 			// Prompt user to pick an existing Foundry project or create new resources
@@ -1317,33 +1368,82 @@ func (a *InitAction) configureModelChoice(
 	// Step 1: Foundry project selection
 	if a.flags.projectResourceId != "" {
 		// --project-id provided: auto-select "existing" path
-		newCred, err := ensureSubscription(
+		newCred, subDeferred, err := tryEnsureSubscription(
 			ctx, a.azdClient, a.azureContext, a.environment.Name,
 			"Select an Azure subscription to look up available models and provision your Foundry project resources.",
+			a.flags.noPrompt,
 		)
 		if err != nil {
 			return nil, err
 		}
-		a.credential = newCred
-
-		selectedProject, err := selectFoundryProject(
-			ctx, a.azdClient, a.credential, a.azureContext, a.environment.Name,
-			a.azureContext.Scope.SubscriptionId, a.flags.projectResourceId,
-			a.isCodeDeploy,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		if selectedProject != nil {
-			if err := setEnvValue(
-				ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true",
-			); err != nil {
-				return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
-			}
+		if subDeferred {
+			// Subscription is required to look up the existing project.
+			// Defer that and the foundry project lookup, but still fall
+			// through to ProcessModels below -- in --no-prompt mode the
+			// model code paths use buildHeadlessDeployment which works
+			// without a credential (falls back to defaults and may leave
+			// the model version empty).
+			a.deferred.Add(deferredSubscriptionID)
+			a.deferred.Add(deferredFoundryProject)
 		} else {
-			return nil, fmt.Errorf("specified foundry project was not found or is not eligible for the current configuration: %s", a.flags.projectResourceId)
+			a.credential = newCred
+
+			selectedProject, err := selectFoundryProject(
+				ctx, a.azdClient, a.credential, a.azureContext, a.environment.Name,
+				a.azureContext.Scope.SubscriptionId, a.flags.projectResourceId,
+				a.isCodeDeploy,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			if selectedProject != nil {
+				if err := setEnvValue(
+					ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "true",
+				); err != nil {
+					return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+				}
+			} else {
+				return nil, fmt.Errorf("specified foundry project was not found or is not eligible for the current configuration: %s", a.flags.projectResourceId)
+			}
 		}
+	} else if a.flags.noPrompt {
+		// --no-prompt with no --project-id and no AZURE_AI_PROJECT_ID:
+		// take the "create new" branch unconditionally (can't drive Select()).
+		a.deferred.Add(deferredFoundryProject)
+
+		// Creating new resources -- clear any stale existing-project flag
+		// even when subscription/location are deferred.
+		if err := setEnvValue(
+			ctx, a.azdClient, a.environment.Name, "USE_EXISTING_AI_PROJECT", "false",
+		); err != nil {
+			return nil, fmt.Errorf("failed to set USE_EXISTING_AI_PROJECT: %w", err)
+		}
+
+		newCred, subDeferred, locDeferred, err := tryEnsureSubscriptionAndLocation(
+			ctx, a.azdClient, a.azureContext, a.environment.Name,
+			"Select an Azure subscription to look up available models and provision your Foundry project resources.",
+			a.flags.noPrompt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if subDeferred {
+			a.deferred.Add(deferredSubscriptionID)
+		}
+		if locDeferred {
+			a.deferred.Add(deferredLocation)
+		}
+		if newCred != nil {
+			a.credential = newCred
+		}
+
+		// Note: we no longer short-circuit when subscription/location is
+		// deferred. ProcessModels below dispatches to buildHeadlessDeployment
+		// in --no-prompt mode, which works without sub/loc/credential (it
+		// falls back to defaults). The deferredModelVersion entry, if any,
+		// is added after ProcessModels returns based on whether any
+		// deployment ended up with an empty version.
 	} else {
 		// Prompt user to pick an existing Foundry project or create new resources
 		projectChoices := []*azdext.SelectChoice{
@@ -1425,12 +1525,16 @@ func (a *InitAction) configureModelChoice(
 		}
 	}
 
-	// Now process models — getModelDeploymentDetails will branch based on AZURE_AI_PROJECT_ID
-	agentManifest, deploymentDetails, err := a.ProcessModels(ctx, agentManifest)
+	// Now process models — getModelDeploymentDetails will branch based on
+	// flags.noPrompt (headless path) or AZURE_AI_PROJECT_ID (interactive path).
+	agentManifest, deploymentDetails, versionDeferred, err := a.ProcessModels(ctx, agentManifest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process model resources: %w", err)
 	}
 	a.deploymentDetails = deploymentDetails
+	if versionDeferred {
+		a.deferred.Add(deferredModelVersion)
+	}
 
 	// Set AZD_AGENT_SKIP_ACR so Bicep knows whether to create a container registry.
 	if err := setACREnvVar(ctx, a.azdClient, a.environment.Name, a.isCodeDeploy); err != nil {
@@ -1999,22 +2103,31 @@ func (a *InitAction) addToProject(ctx context.Context, targetDir string, agentMa
 				if toolResource, ok := resource.(agent_yaml.ToolResource); ok {
 					// Check if this is a resource that requires a connection name
 					if toolResource.Id == "bing_grounding" || toolResource.Id == "azure_ai_search" {
-						// Prompt the user for a connection name
-						resp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
-							Options: &azdext.PromptOptions{
-								Message:        fmt.Sprintf("Enter a connection name for adding the resource %s to your Microsoft Foundry project", toolResource.Id),
-								IgnoreHintKeys: true,
-								DefaultValue:   toolResource.Id,
-							},
-						})
-						if err != nil {
-							return fmt.Errorf("prompting for connection name for %s: %w", toolResource.Id, err)
+						// In --no-prompt mode, default the connection name to the
+						// tool ID (the same value used as the interactive default)
+						// so headless callers can still produce a valid azure.yaml.
+						connectionName := toolResource.Id
+						if !a.flags.noPrompt {
+							resp, err := a.azdClient.Prompt().Prompt(ctx, &azdext.PromptRequest{
+								Options: &azdext.PromptOptions{
+									Message: fmt.Sprintf(
+										"Enter a connection name for adding the resource %s to your Microsoft Foundry project",
+										toolResource.Id,
+									),
+									IgnoreHintKeys: true,
+									DefaultValue:   toolResource.Id,
+								},
+							})
+							if err != nil {
+								return fmt.Errorf("prompting for connection name for %s: %w", toolResource.Id, err)
+							}
+							connectionName = resp.Value
 						}
 
 						// Add to resource details
 						resourceDetails = append(resourceDetails, project.Resource{
 							Resource:       toolResource.Id,
-							ConnectionName: resp.Value,
+							ConnectionName: connectionName,
 						})
 					}
 				}
@@ -2355,6 +2468,19 @@ func (a *InitAction) populateContainerSettings(
 				break
 			}
 		}
+	}
+
+	// In --no-prompt mode, accept the default tier (matches the manifest if it
+	// already declares resources, otherwise the smallest tier) instead of
+	// blocking on an interactive Select().
+	if a.flags.noPrompt {
+		selected := project.ResourceTiers[defaultIndex]
+		return &project.ContainerSettings{
+			Resources: &project.ResourceSettings{
+				Memory: selected.Memory,
+				Cpu:    selected.Cpu,
+			},
+		}, nil
 	}
 
 	resp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{

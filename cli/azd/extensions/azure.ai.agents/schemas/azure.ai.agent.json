@@ -90,9 +90,12 @@
       "properties": {
         "name": { "type": "string", "description": "Model name." },
         "format": { "type": "string", "description": "Model format." },
-        "version": { "type": "string", "description": "Model version." }
+        "version": {
+          "type": "string",
+          "description": "Model version. May be left empty when init defers binding; provide via `azd ai agent model set --version` before provisioning."
+        }
       },
-      "required": ["name", "format", "version"],
+      "required": ["name", "format"],
       "additionalProperties": false
     },
     "DeploymentSku": {
