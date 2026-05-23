@@ -239,13 +239,11 @@ func environmentVariablesSection() string {
 }
 
 // docsAndAgentSkillsSection renders the DOCS & AGENT SKILLS help block.
-// Phase 1D + Phase 2 + Phase 3: lists the agent-friendly read paths,
-// the in-binary `azd ai agent docs` topic surface, and the unified
-// front-door `azd ai doc agent` command from the azure.ai.docs extension.
-//
-// When azure.ai.docs is not installed, `azd ai doc agent` will fail with
-// an install hint; that's intentional -- we want users to know the
-// preferred entry point even if they haven't installed the docs ext yet.
+// The agent-friendly workflow docs are owned by the azure.ai.docs extension
+// (a separate front-door extension) and reached via `azd ai doc agent`.
+// This section also points at the in-binary read paths that exist today
+// (show, project show, doctor) so agents can drive the most common
+// inspection workflows without installing the docs extension first.
 func docsAndAgentSkillsSection() string {
 	var b strings.Builder
 	bold := color.New(color.Bold)
@@ -254,12 +252,10 @@ func docsAndAgentSkillsSection() string {
 	b.WriteString("    azd ai agent show --output json                Inspect the deployed agent record (JSON).\n")
 	b.WriteString("    azd ai agent project show --output json        Inspect identity, subscription, and project context.\n")
 	b.WriteString("    azd ai agent doctor --output json              Diagnose configuration, auth, and deployment issues.\n")
-	b.WriteString("\n  Agent-friendly workflow docs (markdown, embedded in this binary):\n\n")
-	b.WriteString("    azd ai agent docs                              List available skill topics.\n")
-	b.WriteString("    azd ai agent docs --topic <name>               Print one of: initialize, configure, investigate, operate.\n")
-	b.WriteString("\n  Unified front door across every azure.ai.* extension (requires azure.ai.docs):\n\n")
+	b.WriteString("\n  Agent-friendly workflow docs (install the azure.ai.docs extension):\n\n")
+	b.WriteString("    azd ext install azure.ai.docs                  One-time install of the docs front door.\n")
 	b.WriteString("    azd ai doc                                     List ai.* extensions with docs available.\n")
 	b.WriteString("    azd ai doc agent                               List skill topics for this extension.\n")
-	b.WriteString("    azd ai doc agent <topic>                       Print one topic via the docs front door.\n")
+	b.WriteString("    azd ai doc agent <topic>                       Print one topic (initialize, configure, investigate, operate).\n")
 	return b.String()
 }

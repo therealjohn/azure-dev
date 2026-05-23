@@ -1,9 +1,10 @@
 # Foundry docs for AI agents (Preview)
 
 Single front door for agent-friendly documentation across every
-`azure.ai.*` extension. Each sibling extension owns its own embedded
-markdown topics; this extension routes topic requests to the right
-sibling and renders the result.
+`azure.ai.*` extension. The markdown is embedded in this extension --
+install once, and `azd ai doc <category> <topic>` returns documentation
+for any covered ai.* extension without requiring the sibling extension
+to be installed.
 
 The shape mirrors a familiar `skills` surface:
 
@@ -21,11 +22,36 @@ azd ai doc agent investigate
 azd ai doc agent operate
 ```
 
-Each topic is a contract an agent reads to drive the CLI: exact
-invocations, JSON shape examples, error codes, confirmation-envelope
-handling. Topics are owned by (and embedded in) the extension they
-describe; this extension is a thin forwarder.
+Each topic is a contract an agent reads to drive the matching CLI
+commands: exact invocations, JSON shape examples, error codes,
+confirmation-envelope handling.
 
-Today only `azure.ai.agents` ships docs. As other ai.* extensions adopt
-the integration pattern, they get added to `agentSiblings` in
-`internal/cmd/doc_index.go`.
+## Adding topics for another ai.* extension
+
+The repo layout is intentionally simple:
+
+```
+internal/cmd/
+  skills/
+    agent/            <-- topics for azure.ai.agents
+      initialize.md
+      configure.md
+      investigate.md
+      operate.md
+    toolbox/          <-- future: topics for azure.ai.toolboxes
+      ...
+    project/          <-- future: topics for azure.ai.projects
+      ...
+  doc_index.go        <-- docCategories table (one entry per skills/ subdir)
+  doc_agent.go        <-- per-extension subcommand
+```
+
+To add a new sibling:
+
+1. Drop `skills/<sibling>/<topic>.md` files into this extension.
+2. Add an entry to `docCategories` in `doc_index.go`.
+3. Add a `new<Sibling>Command()` constructor mirroring `newAgentCommand()`
+   and register it in `root.go`.
+
+No coordination with the sibling extension is required; this extension is
+the source of truth for its agent-friendly docs.
