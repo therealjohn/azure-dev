@@ -655,10 +655,10 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 
 			// Agent-driven onboarding pre-flow (interactive mode only).
 			// Asks whether the user wants their coding agent to drive
-			// the setup; on Yes, installs the Microsoft Foundry skill,
-			// copies a tailored starter prompt to the clipboard, and
-			// exits without running the existing init flow. On No,
-			// returns handled=false and the existing flow continues.
+			// the setup; on Yes, installs the AZD AI skill, copies a
+			// tailored starter prompt to the clipboard, and exits
+			// without running the existing init flow. On No, returns
+			// handled=false and the existing flow continues.
 			if !flags.noPrompt {
 				cwd, cwdErr := os.Getwd()
 				if cwdErr != nil {

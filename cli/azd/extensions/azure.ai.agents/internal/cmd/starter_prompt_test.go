@@ -16,11 +16,11 @@ import (
 func TestRenderStarterPrompt_SubstitutesProjectPath(t *testing.T) {
 	got, err := renderStarterPrompt(StarterPromptVars{
 		ProjectPath: "/home/user/my-app",
-		SkillPath:   ".claude/skills/microsoft-foundry",
+		SkillPath:   ".claude/skills/azd-ai-skill",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, got, "Initialize a Microsoft Foundry agent in this project at /home/user/my-app.")
-	assert.Contains(t, got, "(installed at .claude/skills/microsoft-foundry)")
+	assert.Contains(t, got, "(installed at .claude/skills/azd-ai-skill)")
 }
 
 func TestRenderStarterPrompt_OmitsInstallClauseWhenSkillPathEmpty(t *testing.T) {
@@ -31,7 +31,7 @@ func TestRenderStarterPrompt_OmitsInstallClauseWhenSkillPathEmpty(t *testing.T) 
 		SkillPath:   "",
 	})
 	require.NoError(t, err)
-	assert.Contains(t, got, "Use the Microsoft Foundry skill to drive")
+	assert.Contains(t, got, "Use the AZD AI skill to drive")
 	assert.NotContains(t, got, "(installed at")
 }
 

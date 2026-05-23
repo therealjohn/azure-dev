@@ -41,7 +41,7 @@ var skillPacksFS embed.FS
 
 // defaultPackName is the only pack shipped today. When additional packs
 // are added, this becomes a --pack flag with this string as its default.
-const defaultPackName = "microsoft-foundry"
+const defaultPackName = "azd-ai-skill"
 
 // targetSpec maps a --target value to a display name and an install path
 // (relative to cwd). The install path is final -- the install does not
@@ -117,11 +117,11 @@ into your project at a tool-specific path.
 
 Built-in targets:
 
-  claude     -> .claude/skills/microsoft-foundry/
-  codex      -> .agents/skills/microsoft-foundry/
-  gemini     -> .agents/skills/microsoft-foundry/
-  copilot    -> .agents/skills/microsoft-foundry/
-  opencode   -> .agents/skills/microsoft-foundry/
+  claude     -> .claude/skills/azd-ai-skill/
+  codex      -> .agents/skills/azd-ai-skill/
+  gemini     -> .agents/skills/azd-ai-skill/
+  copilot    -> .agents/skills/azd-ai-skill/
+  opencode   -> .agents/skills/azd-ai-skill/
   custom     -> uses --path
 
 Safety:

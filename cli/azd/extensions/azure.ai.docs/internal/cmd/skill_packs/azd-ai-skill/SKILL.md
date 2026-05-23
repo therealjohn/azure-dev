@@ -1,9 +1,9 @@
 ---
-name: Microsoft Foundry
+name: AZD AI
 description: Scaffold, provision, and deploy AI agents to Microsoft Foundry using the Azure Developer CLI (azd) and the azure.ai.agents extension.
 ---
 
-# Microsoft Foundry skill (azd-driven)
+# AZD AI skill (azd-driven)
 
 Audience: an AI coding assistant driving the `azd ai agent` extension on
 behalf of a developer. Every command below is safe to run from a script

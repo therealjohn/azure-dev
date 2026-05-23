@@ -26,11 +26,11 @@ func TestKnownTargets_MapsToExpectedPaths(t *testing.T) {
 		target  string
 		wantDir string // empty for "custom" (uses --path)
 	}{
-		{"claude", filepath.Join(".claude", "skills", "microsoft-foundry")},
-		{"codex", filepath.Join(".agents", "skills", "microsoft-foundry")},
-		{"gemini", filepath.Join(".agents", "skills", "microsoft-foundry")},
-		{"copilot", filepath.Join(".agents", "skills", "microsoft-foundry")},
-		{"opencode", filepath.Join(".agents", "skills", "microsoft-foundry")},
+		{"claude", filepath.Join(".claude", "skills", "azd-ai-skill")},
+		{"codex", filepath.Join(".agents", "skills", "azd-ai-skill")},
+		{"gemini", filepath.Join(".agents", "skills", "azd-ai-skill")},
+		{"copilot", filepath.Join(".agents", "skills", "azd-ai-skill")},
+		{"opencode", filepath.Join(".agents", "skills", "azd-ai-skill")},
 		{"custom", ""},
 	}
 	for _, tc := range cases {
@@ -161,7 +161,7 @@ func TestSkillInstallAction_InstallsPackToTarget(t *testing.T) {
 	}
 	require.NoError(t, action.Run(context.Background()))
 
-	dest := filepath.Join(cwd, ".agents", "skills", "microsoft-foundry")
+	dest := filepath.Join(cwd, ".agents", "skills", "azd-ai-skill")
 	assertFileContent(t, filepath.Join(dest, "SKILL.md"), "skill body")
 	assertFileContent(t, filepath.Join(dest, "helpers", "extra.md"), "extra body")
 }
@@ -188,7 +188,7 @@ func TestSkillInstallAction_CustomPathWritesToProvidedDir(t *testing.T) {
 func TestSkillInstallAction_RefusesToOverwriteModifiedOwnedFile(t *testing.T) {
 	cwd := t.TempDir()
 	pack := newTestPack(map[string]string{"SKILL.md": "bundled body"})
-	dest := filepath.Join(cwd, ".agents", "skills", "microsoft-foundry")
+	dest := filepath.Join(cwd, ".agents", "skills", "azd-ai-skill")
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte("user edited"), 0o644))
 
@@ -210,7 +210,7 @@ func TestSkillInstallAction_RefusesToOverwriteModifiedOwnedFile(t *testing.T) {
 func TestSkillInstallAction_ForceOverwritesModifiedOwnedFile(t *testing.T) {
 	cwd := t.TempDir()
 	pack := newTestPack(map[string]string{"SKILL.md": "bundled body"})
-	dest := filepath.Join(cwd, ".agents", "skills", "microsoft-foundry")
+	dest := filepath.Join(cwd, ".agents", "skills", "azd-ai-skill")
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte("user edited"), 0o644))
 
@@ -228,7 +228,7 @@ func TestSkillInstallAction_ForceOverwritesModifiedOwnedFile(t *testing.T) {
 func TestSkillInstallAction_LeavesForeignFilesUntouched(t *testing.T) {
 	cwd := t.TempDir()
 	pack := newTestPack(map[string]string{"SKILL.md": "owned"})
-	dest := filepath.Join(cwd, ".agents", "skills", "microsoft-foundry")
+	dest := filepath.Join(cwd, ".agents", "skills", "azd-ai-skill")
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 	// Foreign file -- not in the pack manifest. Must survive both
 	// initial install and --force re-install.
@@ -249,7 +249,7 @@ func TestSkillInstallAction_LeavesForeignFilesUntouched(t *testing.T) {
 func TestSkillInstallAction_IdempotentWhenContentMatches(t *testing.T) {
 	cwd := t.TempDir()
 	pack := newTestPack(map[string]string{"SKILL.md": "same"})
-	dest := filepath.Join(cwd, ".agents", "skills", "microsoft-foundry")
+	dest := filepath.Join(cwd, ".agents", "skills", "azd-ai-skill")
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dest, "SKILL.md"), []byte("same"), 0o644))
 
@@ -286,7 +286,7 @@ func TestSkillInstallAction_JSONOutputShape(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
 	assert.Equal(t, "installed", got.Status)
 	assert.Equal(t, "copilot", got.Target)
-	assert.Equal(t, ".agents/skills/microsoft-foundry", got.Path)
+	assert.Equal(t, ".agents/skills/azd-ai-skill", got.Path)
 	assert.Equal(t, []string{"SKILL.md", "helpers/extra.md"}, got.Files)
 }
 

@@ -1,6 +1,6 @@
 Initialize a Microsoft Foundry agent in this project at {{.ProjectPath}}.
 
-Use the Microsoft Foundry skill{{if .SkillPath}} (installed at {{.SkillPath}}){{end}} to drive the
+Use the AZD AI skill{{if .SkillPath}} (installed at {{.SkillPath}}){{end}} to drive the
 end-to-end setup:
 
 1. Verify identity and project context with `azd ai agent project show --output json`.

@@ -11,7 +11,7 @@
 //                   No  -> return (handled=false) -> existing init runs.
 //                   Yes -> continue.
 //
-//   Q2 [Confirm]  Install the Microsoft Foundry skill for your coding
+//   Q2 [Confirm]  Install the AZD AI skill for your coding
 //                 agent?
 //                   Yes -> Q3 -> install
 //                   No  -> skip install, go to starter prompt
@@ -75,31 +75,31 @@ var preflowTargets = []preflowTarget{
 	{
 		targetValue:      "claude",
 		displayName:      "Claude Code",
-		installPath:      ".claude/skills/microsoft-foundry",
+		installPath:      ".claude/skills/azd-ai-skill",
 		pasteInstruction: "Open Claude Code and paste the prompt.",
 	},
 	{
 		targetValue:      "codex",
 		displayName:      "Codex",
-		installPath:      ".agents/skills/microsoft-foundry",
+		installPath:      ".agents/skills/azd-ai-skill",
 		pasteInstruction: "Open Codex CLI and paste the prompt.",
 	},
 	{
 		targetValue:      "gemini",
 		displayName:      "Gemini CLI",
-		installPath:      ".agents/skills/microsoft-foundry",
+		installPath:      ".agents/skills/azd-ai-skill",
 		pasteInstruction: "Open Gemini CLI and paste the prompt.",
 	},
 	{
 		targetValue:      "copilot",
 		displayName:      "GitHub Copilot",
-		installPath:      ".agents/skills/microsoft-foundry",
+		installPath:      ".agents/skills/azd-ai-skill",
 		pasteInstruction: "Open GitHub Copilot Chat and paste the prompt.",
 	},
 	{
 		targetValue:      "opencode",
 		displayName:      "Opencode",
-		installPath:      ".agents/skills/microsoft-foundry",
+		installPath:      ".agents/skills/azd-ai-skill",
 		pasteInstruction: "Open Opencode and paste the prompt.",
 	},
 	{
@@ -152,7 +152,7 @@ func (a *InitPreflowAction) Run(ctx context.Context) (bool, error) {
 	//
 	// We MUST track the chosen target directly rather than recover it
 	// from the install path because codex/gemini/copilot/opencode all
-	// install to the same path (.agents/skills/microsoft-foundry); a
+	// install to the same path (.agents/skills/azd-ai-skill); a
 	// reverse-lookup by path would always resolve to the first matching
 	// entry (codex), producing wrong "Open Codex CLI ..." text even
 	// when the user selected GitHub Copilot.
@@ -217,7 +217,7 @@ func (a *InitPreflowAction) askDelegate(ctx context.Context) (bool, error) {
 func (a *InitPreflowAction) askInstallSkill(ctx context.Context) (bool, error) {
 	resp, err := a.azdClient.Prompt().Confirm(ctx, &azdext.ConfirmRequest{
 		Options: &azdext.ConfirmOptions{
-			Message:      "Install the Microsoft Foundry skill for your coding agent?",
+			Message:      "Install the AZD AI skill for your coding agent?",
 			DefaultValue: new(true),
 		},
 	})
@@ -289,7 +289,7 @@ func (a *InitPreflowAction) askTargetTool(ctx context.Context) (preflowTarget, s
 }
 
 // targetSelectLabel renders a Q3 Select choice label: tool name first,
-// path in gray after, e.g. "GitHub Copilot (.agents/skills/microsoft-foundry)".
+// path in gray after, e.g. "GitHub Copilot (.agents/skills/azd-ai-skill)".
 // Matches the look of azd's `WithGrayFormat` convention.
 func targetSelectLabel(t preflowTarget) string {
 	if t.installPath == "" {
@@ -490,7 +490,7 @@ func (a *InitPreflowAction) printReadyToGo(target preflowTarget, installedAt str
 	fmt.Fprintln(a.out)
 
 	if installedAt != "" {
-		fmt.Fprintf(a.out, "Your agent will use the Microsoft Foundry skill at %s\n", installedAt)
+		fmt.Fprintf(a.out, "Your agent will use the AZD AI skill at %s\n", installedAt)
 		fmt.Fprintln(a.out, "to scaffold, provision, and deploy a Foundry agent tailored")
 		fmt.Fprintln(a.out, "to your project.")
 	} else {

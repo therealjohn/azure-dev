@@ -26,15 +26,15 @@ GitHub Copilot, Opencode, or a custom integration) can follow them.
 
 Skill packs are read from this extension's embedded content; installing
 copies them into a tool-specific path under the current project (e.g.
-.claude/skills/microsoft-foundry/ for Claude Code).`,
-		Example: `  # Install the Microsoft Foundry skill for GitHub Copilot
+.claude/skills/azd-ai-skill/ for Claude Code).`,
+		Example: `  # Install the AZD AI skill for GitHub Copilot
   azd ai doc skills install --target copilot
 
-  # Install for Claude Code (writes .claude/skills/microsoft-foundry/)
+  # Install for Claude Code (writes .claude/skills/azd-ai-skill/)
   azd ai doc skills install --target claude
 
   # Install to a custom directory
-  azd ai doc skills install --target custom --path .my-tool/skills/foundry`,
+  azd ai doc skills install --target custom --path .my-tool/skills/azd-ai`,
 	}
 
 	cmd.AddCommand(newSkillInstallCommand(extCtx))

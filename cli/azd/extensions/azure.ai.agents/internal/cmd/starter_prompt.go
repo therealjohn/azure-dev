@@ -42,8 +42,8 @@ type StarterPromptVars struct {
 	// ProjectPath is the absolute path to the project root (typically
 	// the user's current working directory).
 	ProjectPath string
-	// SkillPath is the relative path where the Microsoft Foundry skill
-	// was installed (e.g. ".claude/skills/microsoft-foundry"). Empty
+	// SkillPath is the relative path where the AZD AI skill
+	// was installed (e.g. ".claude/skills/azd-ai-skill"). Empty
 	// when no install ran in this session.
 	SkillPath string
 }

@@ -29,11 +29,11 @@ func TestPreflowTargets_PathsAlignWithDocsExtension(t *testing.T) {
 	// pins the same paths on the consumer side so the two cannot
 	// drift silently.
 	cases := map[string]string{
-		"claude":   ".claude/skills/microsoft-foundry",
-		"codex":    ".agents/skills/microsoft-foundry",
-		"gemini":   ".agents/skills/microsoft-foundry",
-		"copilot":  ".agents/skills/microsoft-foundry",
-		"opencode": ".agents/skills/microsoft-foundry",
+		"claude":   ".claude/skills/azd-ai-skill",
+		"codex":    ".agents/skills/azd-ai-skill",
+		"gemini":   ".agents/skills/azd-ai-skill",
+		"copilot":  ".agents/skills/azd-ai-skill",
+		"opencode": ".agents/skills/azd-ai-skill",
 		"custom":   "",
 	}
 	for _, tgt := range preflowTargets {
@@ -55,7 +55,7 @@ func TestPreflowTargets_HavePasteInstructions(t *testing.T) {
 
 // TestPreflowTargets_DocumentsAmbiguousInstallPaths records the design
 // fact that codex / gemini / copilot / opencode all install to the
-// same path (.agents/skills/microsoft-foundry). Run() MUST track the
+// same path (.agents/skills/azd-ai-skill). Run() MUST track the
 // chosen target directly from Q3 rather than reverse-resolving it
 // from the install path -- a path-based lookup would always resolve to
 // the first matching entry and render the wrong tool name in the
@@ -88,19 +88,19 @@ func TestTargetSelectLabel_IncludesPathInGray(t *testing.T) {
 	got := targetSelectLabel(preflowTarget{
 		targetValue: "copilot",
 		displayName: "GitHub Copilot",
-		installPath: ".agents/skills/microsoft-foundry",
+		installPath: ".agents/skills/azd-ai-skill",
 	})
 	assert.Contains(t, got, "GitHub Copilot")
-	assert.Contains(t, got, ".agents/skills/microsoft-foundry")
+	assert.Contains(t, got, ".agents/skills/azd-ai-skill")
 	// Color is rendered as ANSI escape sequences when the global
 	// fatih/color noColor flag is unset, but our assertions stay
 	// color-agnostic to avoid flakiness in CI. The label content is
 	// what matters; the color comes from the WithGrayFormat call which
 	// is covered by its own package's tests.
-	gray := output.WithGrayFormat("(.agents/skills/microsoft-foundry)")
+	gray := output.WithGrayFormat("(.agents/skills/azd-ai-skill)")
 	assert.True(t,
 		strings.Contains(got, gray) ||
-			strings.Contains(got, "(.agents/skills/microsoft-foundry)"),
+			strings.Contains(got, "(.agents/skills/azd-ai-skill)"),
 		"label should include gray-formatted path; got %q", got)
 }
 
@@ -119,14 +119,14 @@ func TestPrintReadyToGo_IncludesPasteInstructionAndManualFallback(t *testing.T) 
 	a.printReadyToGo(preflowTarget{
 		targetValue:      "copilot",
 		displayName:      "GitHub Copilot",
-		installPath:      ".agents/skills/microsoft-foundry",
+		installPath:      ".agents/skills/azd-ai-skill",
 		pasteInstruction: "Open GitHub Copilot Chat and paste the prompt.",
-	}, ".agents/skills/microsoft-foundry")
+	}, ".agents/skills/azd-ai-skill")
 
 	got := buf.String()
 	assert.Contains(t, got, "You're ready to go!")
 	assert.Contains(t, got, "Open GitHub Copilot Chat and paste the prompt.")
-	assert.Contains(t, got, "Your agent will use the Microsoft Foundry skill at .agents/skills/microsoft-foundry")
+	assert.Contains(t, got, "Your agent will use the AZD AI skill at .agents/skills/azd-ai-skill")
 	assert.Contains(t, got, "Prefer to set up manually?")
 	assert.Contains(t, got, "azd ai agent init")
 	assert.Contains(t, got, "azd provision")
@@ -150,7 +150,7 @@ func TestPrintReadyToGo_OmitsInstallReferenceWhenInstallSkipped(t *testing.T) {
 	assert.Contains(t, got, "Open your coding agent and paste the prompt.")
 	// When the user declined Q2, the block should NOT claim the skill
 	// is installed at any specific path.
-	assert.NotContains(t, got, "Your agent will use the Microsoft Foundry skill at")
+	assert.NotContains(t, got, "Your agent will use the AZD AI skill at")
 	assert.Contains(t, got, "Your agent will follow the starter prompt")
 	// Manual-fallback section still renders so the user has a way out.
 	assert.Contains(t, got, "Prefer to set up manually?")
@@ -158,14 +158,14 @@ func TestPrintReadyToGo_OmitsInstallReferenceWhenInstallSkipped(t *testing.T) {
 
 // TestPrintReadyToGo_UsesPasteInstructionFromChosenTarget pins the
 // regression fixed in this commit: codex/gemini/copilot/opencode all
-// share the same installPath (.agents/skills/microsoft-foundry).
+// share the same installPath (.agents/skills/azd-ai-skill).
 // Earlier the ready-to-go block reverse-looked-up the target by
 // installPath, so picking GitHub Copilot rendered "Open Codex CLI ..."
 // because codex was the first match in preflowTargets. The fix tracks
 // the chosen target directly from Q3; this test enforces that contract
 // for each of the four ambiguous targets.
 func TestPrintReadyToGo_UsesPasteInstructionFromChosenTarget(t *testing.T) {
-	const ambiguousPath = ".agents/skills/microsoft-foundry"
+	const ambiguousPath = ".agents/skills/azd-ai-skill"
 	cases := []struct {
 		targetValue   string
 		wantContains  string
