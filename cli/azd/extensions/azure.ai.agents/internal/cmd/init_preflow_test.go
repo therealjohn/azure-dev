@@ -9,6 +9,7 @@ import (
 
 	"github.com/azure/azure-dev/cli/azd/pkg/output"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPreflowTargets_AllExpectedToolsPresent(t *testing.T) {
@@ -50,6 +51,37 @@ func TestPreflowTargets_HavePasteInstructions(t *testing.T) {
 	for _, tgt := range preflowTargets {
 		assert.NotEmpty(t, tgt.pasteInstruction, "target %s missing pasteInstruction", tgt.targetValue)
 	}
+}
+
+// TestPreflowTargets_DocumentsAmbiguousInstallPaths records the design
+// fact that codex / gemini / copilot / opencode all install to the
+// same path (.agents/skills/microsoft-foundry). Run() MUST track the
+// chosen target directly from Q3 rather than reverse-resolving it
+// from the install path -- a path-based lookup would always resolve to
+// the first matching entry and render the wrong tool name in the
+// ready-to-go block.
+//
+// Treat this test as documentation: if it ever fails because the
+// shared-path arrangement changes, also revisit InitPreflowAction.Run
+// to make sure no reverse-lookup logic crept back in.
+func TestPreflowTargets_DocumentsAmbiguousInstallPaths(t *testing.T) {
+	byPath := map[string][]string{}
+	for _, tgt := range preflowTargets {
+		if tgt.installPath == "" {
+			continue
+		}
+		byPath[tgt.installPath] = append(byPath[tgt.installPath], tgt.targetValue)
+	}
+	var sharedPaths int
+	for _, names := range byPath {
+		if len(names) > 1 {
+			sharedPaths++
+		}
+	}
+	assert.GreaterOrEqual(t, sharedPaths, 1,
+		"expected at least one installPath shared by multiple targets; "+
+			"if this fails, the path-based reverse-lookup hazard documented in Run() is gone "+
+			"and the warning comment there can be relaxed")
 }
 
 func TestTargetSelectLabel_IncludesPathInGray(t *testing.T) {
@@ -122,6 +154,84 @@ func TestPrintReadyToGo_OmitsInstallReferenceWhenInstallSkipped(t *testing.T) {
 	assert.Contains(t, got, "Your agent will follow the starter prompt")
 	// Manual-fallback section still renders so the user has a way out.
 	assert.Contains(t, got, "Prefer to set up manually?")
+}
+
+// TestPrintReadyToGo_UsesPasteInstructionFromChosenTarget pins the
+// regression fixed in this commit: codex/gemini/copilot/opencode all
+// share the same installPath (.agents/skills/microsoft-foundry).
+// Earlier the ready-to-go block reverse-looked-up the target by
+// installPath, so picking GitHub Copilot rendered "Open Codex CLI ..."
+// because codex was the first match in preflowTargets. The fix tracks
+// the chosen target directly from Q3; this test enforces that contract
+// for each of the four ambiguous targets.
+func TestPrintReadyToGo_UsesPasteInstructionFromChosenTarget(t *testing.T) {
+	const ambiguousPath = ".agents/skills/microsoft-foundry"
+	cases := []struct {
+		targetValue   string
+		wantContains  string
+		wantNotEqual1 string // sibling target's paste line we must NOT see
+		wantNotEqual2 string
+		wantNotEqual3 string
+	}{
+		{
+			targetValue:   "codex",
+			wantContains:  "Open Codex CLI",
+			wantNotEqual1: "Open GitHub Copilot",
+			wantNotEqual2: "Open Gemini CLI",
+			wantNotEqual3: "Open Opencode",
+		},
+		{
+			targetValue:   "gemini",
+			wantContains:  "Open Gemini CLI",
+			wantNotEqual1: "Open GitHub Copilot",
+			wantNotEqual2: "Open Codex CLI",
+			wantNotEqual3: "Open Opencode",
+		},
+		{
+			targetValue:   "copilot",
+			wantContains:  "Open GitHub Copilot",
+			wantNotEqual1: "Open Codex CLI",
+			wantNotEqual2: "Open Gemini CLI",
+			wantNotEqual3: "Open Opencode",
+		},
+		{
+			targetValue:   "opencode",
+			wantContains:  "Open Opencode",
+			wantNotEqual1: "Open Codex CLI",
+			wantNotEqual2: "Open Gemini CLI",
+			wantNotEqual3: "Open GitHub Copilot",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.targetValue, func(t *testing.T) {
+			// Find the matching preflowTarget in the canonical table so
+			// the test exercises the real wiring rather than a fake.
+			var target preflowTarget
+			var found bool
+			for _, t := range preflowTargets {
+				if t.targetValue == tc.targetValue {
+					target = t
+					found = true
+					break
+				}
+			}
+			require.True(t, found, "preflowTargets missing %q", tc.targetValue)
+			require.Equal(t, ambiguousPath, target.installPath,
+				"this test assumes %q shares the ambiguous .agents path", tc.targetValue)
+
+			var buf testWriter
+			a := &InitPreflowAction{out: &buf}
+			a.printReadyToGo(target, ambiguousPath)
+
+			got := buf.String()
+			assert.Contains(t, got, tc.wantContains,
+				"ready-to-go block must use the chosen target's paste instruction")
+			for _, unwanted := range []string{tc.wantNotEqual1, tc.wantNotEqual2, tc.wantNotEqual3} {
+				assert.NotContains(t, got, unwanted,
+					"ready-to-go block must not leak a sibling target's paste instruction")
+			}
+		})
+	}
 }
 
 // testWriter is a tiny io.Writer that captures into a strings.Builder.

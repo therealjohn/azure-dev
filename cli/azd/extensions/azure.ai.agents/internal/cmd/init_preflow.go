@@ -146,6 +146,18 @@ func (a *InitPreflowAction) Run(ctx context.Context) (bool, error) {
 	// From here on we own the flow regardless of errors; always return
 	// handled=true so the caller skips InitAction.
 
+	// chosen tracks the tool the user picked at Q3. When Q2=No (no
+	// install) we never run Q3 -- fall back to the "custom" copy in the
+	// ready-to-go block since we cannot name a specific tool then.
+	//
+	// We MUST track the chosen target directly rather than recover it
+	// from the install path because codex/gemini/copilot/opencode all
+	// install to the same path (.agents/skills/microsoft-foundry); a
+	// reverse-lookup by path would always resolve to the first matching
+	// entry (codex), producing wrong "Open Codex CLI ..." text even
+	// when the user selected GitHub Copilot.
+	chosen := preflowTargets[len(preflowTargets)-1] // "custom" default
+
 	var installedAt string
 	wantInstall, err := a.askInstallSkill(ctx)
 	if err != nil {
@@ -156,6 +168,7 @@ func (a *InitPreflowAction) Run(ctx context.Context) (bool, error) {
 		if err != nil {
 			return true, err
 		}
+		chosen = target
 		path, err := a.installSkill(ctx, target, customPath)
 		if err != nil {
 			return true, err
@@ -173,21 +186,6 @@ func (a *InitPreflowAction) Run(ctx context.Context) (bool, error) {
 
 	printStarterPrompt(a.out, body)
 	a.handleClipboard(ctx, body)
-
-	// Resolve which tool the ready-to-go block targets. When the user
-	// declined the install at Q2, we don't know -- fall back to the
-	// generic "custom" copy that doesn't name a specific tool.
-	chosen := preflowTargets[len(preflowTargets)-1] // "custom" default
-	if wantInstall && installedAt != "" {
-		for _, t := range preflowTargets {
-			if t.installPath == installedAt || (t.targetValue == "custom" && installedAt != "") {
-				chosen = t
-				if t.targetValue != "custom" {
-					break
-				}
-			}
-		}
-	}
 	a.printReadyToGo(chosen, installedAt)
 
 	return true, nil
