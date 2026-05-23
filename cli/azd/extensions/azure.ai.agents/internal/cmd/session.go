@@ -394,7 +394,8 @@ type sessionDeleteFlags struct {
 
 func newSessionDeleteCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &sessionDeleteFlags{}
-	action := &SessionDeleteAction{flags: flags}
+	gate := &confirmationGate{}
+	action := &SessionDeleteAction{flags: flags, gate: gate}
 	extCtx = ensureExtensionContext(extCtx)
 
 	cmd := &cobra.Command{
@@ -405,15 +406,23 @@ func newSessionDeleteCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 Terminates the hosted agent session and deletes the persistent filesystem
 volume. Returns once cleanup is complete.
 
-The session ownership isolation key is derived from the Entra token by default.`,
-		Example: `  # Delete a session
+The session ownership isolation key is derived from the Entra token by default.
+
+Confirmation: this is a destructive write. Pass --force to skip the prompt
+(or the agent confirmation envelope). Pass --dry-run to preview what would
+be deleted without mutating anything.`,
+		Example: `  # Delete a session (prompts to confirm)
   azd ai agent sessions delete my-session
 
-  # Delete with an explicit session ownership isolation key
-  azd ai agent sessions delete my-session --isolation-key sk-abc123`,
+  # Delete after confirming
+  azd ai agent sessions delete my-session --force
+
+  # Preview without deleting
+  azd ai agent sessions delete my-session --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			flags.noPrompt = extCtx.NoPrompt
+			gate.noPrompt = extCtx.NoPrompt
 
 			ctx := azdext.WithAccessToken(cmd.Context())
 
@@ -435,6 +444,7 @@ The session ownership isolation key is derived from the Entra token by default.`
 			"("+agent_api.SessionIsolationKeyHeader+"; derived from Entra token by default)",
 	)
 	addIsolationHeaderFlags(cmd, &flags.isolationHeaderFlags)
+	registerConfirmationFlags(cmd, gate)
 
 	return cmd
 }
@@ -442,6 +452,7 @@ The session ownership isolation key is derived from the Entra token by default.`
 // SessionDeleteAction implements session deletion.
 type SessionDeleteAction struct {
 	flags     *sessionDeleteFlags
+	gate      *confirmationGate
 	sessionID string
 }
 
@@ -449,6 +460,23 @@ func (a *SessionDeleteAction) Run(ctx context.Context) error {
 	sc, err := resolveSessionContext(ctx, a.flags.agentName, a.flags.noPrompt)
 	if err != nil {
 		return err
+	}
+
+	proceed, err := confirmWrite(ctx, ConfirmationRequest{
+		CommandPath:    "agent sessions delete",
+		Description:    fmt.Sprintf("Delete session %q from agent %q.", a.sessionID, sc.agentName),
+		Classification: ConfirmationClassification{Destructive: true},
+		Changes: []string{
+			fmt.Sprintf("Will terminate session %s and delete its filesystem volume on agent %s",
+				a.sessionID, sc.agentName),
+		},
+		ConfirmCommand: fmt.Sprintf("azd ai agent sessions delete %s --force", a.sessionID),
+	}, *a.gate)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return nil
 	}
 
 	credential, err := newAgentCredential()

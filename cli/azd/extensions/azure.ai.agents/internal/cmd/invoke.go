@@ -52,11 +52,13 @@ var createInvokeVersionSession = createInvokeVersionSessionImpl
 type InvokeAction struct {
 	flags    *invokeFlags
 	noPrompt bool
+	gate     *confirmationGate
 	endpoint *parsedAgentEndpoint
 }
 
 func newInvokeCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &invokeFlags{}
+	gate := &confirmationGate{}
 	extCtx = ensureExtensionContext(extCtx)
 
 	cmd := &cobra.Command{
@@ -115,6 +117,7 @@ and --chat-isolation-key on each remote invoke.`,
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
+			gate.noPrompt = extCtx.NoPrompt
 
 			switch len(args) {
 			case 2:
@@ -131,7 +134,7 @@ and --chat-isolation-key on each remote invoke.`,
 				// Only valid when -f is provided
 			}
 
-			action := &InvokeAction{flags: flags, noPrompt: extCtx.NoPrompt}
+			action := &InvokeAction{flags: flags, noPrompt: extCtx.NoPrompt, gate: gate}
 
 			// Agent-endpoint structural conflicts are surfaced first so the user sees
 			// the precise reason their invocation cannot proceed.
@@ -219,6 +222,7 @@ and --chat-isolation-key on each remote invoke.`,
 		"",
 		"Agent version to invoke (creates or reuses a session backed by that version)",
 	)
+	registerConfirmationFlags(cmd, gate)
 
 	return cmd
 }
@@ -322,6 +326,30 @@ func (a *InvokeAction) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Confirmation gate -- invoke is billed when run against a remote agent.
+	// Local invocations skip the gate (no billing, no remote mutation).
+	if !a.flags.local {
+		target := a.flags.name
+		if target == "" {
+			target = "the auto-resolved agent"
+		}
+		proceed, err := confirmWrite(ctx, ConfirmationRequest{
+			CommandPath:    "agent invoke",
+			Description:    fmt.Sprintf("Invoke %s on Foundry.", target),
+			Classification: ConfirmationClassification{Idempotent: false},
+			Changes: []string{
+				fmt.Sprintf("Will call the deployed %s endpoint; this is a billed API call", target),
+			},
+			ConfirmCommand: a.buildInvokeConfirmCommand(),
+		}, *a.gate)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			return nil
+		}
+	}
+
 	if a.flags.local {
 		switch protocol {
 		case agent_api.AgentProtocolInvocations:
@@ -336,6 +364,26 @@ func (a *InvokeAction) Run(ctx context.Context) error {
 		return a.invocationsRemote(ctx)
 	}
 	return a.responsesRemote(ctx)
+}
+
+// buildInvokeConfirmCommand renders the exact command to re-run with --force.
+// Includes the message (or --input-file) and any agent name so the re-run is
+// hermetic. Long messages are not truncated; the agent surface owns its
+// confirmation UX.
+func (a *InvokeAction) buildInvokeConfirmCommand() string {
+	cmd := "azd ai agent invoke"
+	if a.flags.name != "" {
+		cmd += " " + a.flags.name
+	}
+	if a.flags.inputFile != "" {
+		cmd += fmt.Sprintf(" --input-file %s", a.flags.inputFile)
+	} else if a.flags.message != "" {
+		cmd += fmt.Sprintf(" %q", a.flags.message)
+	}
+	if a.flags.version != "" {
+		cmd += fmt.Sprintf(" --version %s", a.flags.version)
+	}
+	return cmd + " --force"
 }
 
 // emitInvokeSuccessNextStep prints the resolver-driven Next: block after a

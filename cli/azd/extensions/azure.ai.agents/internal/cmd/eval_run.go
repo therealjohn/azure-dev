@@ -33,20 +33,44 @@ type evalRunFlags struct {
 
 func newEvalRunCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &evalRunFlags{config: defaultEvalConfigName}
+	gate := &confirmationGate{}
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Execute an evaluation run from eval.yaml.",
-		Args:  cobra.NoArgs,
+		Long: `Execute an evaluation run from eval.yaml.
+
+Confirmation: this submits a billed eval run. Pass --force to skip the
+prompt (or the agent confirmation envelope). Pass --dry-run to preview
+the run request without submitting.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
 			logCleanup := setupDebugLogging(cmd.Flags())
 			defer logCleanup()
+			gate.noPrompt = extCtx.NoPrompt
+
+			proceed, err := confirmWrite(ctx, ConfirmationRequest{
+				CommandPath: "agent eval run",
+				Description: "Execute an evaluation run using the local eval config.",
+				Changes: []string{
+					fmt.Sprintf("Will submit a billed eval run using config %s", flags.config),
+				},
+				ConfirmCommand: "azd ai agent eval run --force",
+			}, *gate)
+			if err != nil {
+				return err
+			}
+			if !proceed {
+				return nil
+			}
+
 			return runEvalRun(ctx, flags, extCtx.NoPrompt)
 		},
 	}
 	cmd.Flags().StringVar(&flags.config, "config", defaultEvalConfigName, "Local eval config YAML")
 	cmd.Flags().StringVar(&flags.name, "name", "", "Name for the eval run (defaults to eval config name)")
 	cmd.Flags().BoolVar(&flags.noWait, "no-wait", false, "Start the run and return immediately without waiting for results")
+	registerConfirmationFlags(cmd, gate)
 	return cmd
 }
 

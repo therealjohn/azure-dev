@@ -35,6 +35,7 @@ type endpointUpdateFlags struct {
 
 func newEndpointUpdateCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &endpointUpdateFlags{}
+	gate := &confirmationGate{}
 	extCtx = ensureExtensionContext(extCtx)
 
 	cmd := &cobra.Command{
@@ -45,12 +46,18 @@ func newEndpointUpdateCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 This command reads the agent_endpoint and agent_card sections from agent.yaml and
 patches the existing agent with those values. No new agent version is created.
 
-The agent must already exist (i.e., it must have been previously deployed).`,
+The agent must already exist (i.e., it must have been previously deployed).
+
+Confirmation: pass --force to skip the prompt (or the agent confirmation
+envelope). Pass --dry-run to preview what would be patched without mutating.`,
 		Example: `  # Update endpoint/card for the default agent service
   azd ai agent endpoint update
 
-  # Update a specific agent service
-  azd ai agent endpoint update my-agent`,
+  # Update a specific agent service after confirming
+  azd ai agent endpoint update my-agent --force
+
+  # Preview without patching
+  azd ai agent endpoint update my-agent --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -58,6 +65,7 @@ The agent must already exist (i.e., it must have been previously deployed).`,
 			}
 
 			ctx := azdext.WithAccessToken(cmd.Context())
+			gate.noPrompt = extCtx.NoPrompt
 
 			azdClient, err := azdext.NewAzdClient()
 			if err != nil {
@@ -65,10 +73,11 @@ The agent must already exist (i.e., it must have been previously deployed).`,
 			}
 			defer azdClient.Close()
 
-			return runEndpointUpdate(ctx, azdClient, flags, extCtx)
+			return runEndpointUpdate(ctx, azdClient, flags, gate, extCtx)
 		},
 	}
 
+	registerConfirmationFlags(cmd, gate)
 	return cmd
 }
 
@@ -76,6 +85,7 @@ func runEndpointUpdate(
 	ctx context.Context,
 	azdClient *azdext.AzdClient,
 	flags *endpointUpdateFlags,
+	gate *confirmationGate,
 	extCtx *azdext.ExtensionContext,
 ) error {
 	// Resolve the agent service from the project.
@@ -105,6 +115,33 @@ func runEndpointUpdate(
 			"agent.yaml for service %q does not define agent_endpoint or agent_card — nothing to update",
 			svc.Name,
 		)
+	}
+
+	// Confirmation gate -- describes the patch as concisely as possible.
+	changes := []string{}
+	if agentDef.AgentEndpoint != nil {
+		changes = append(changes, fmt.Sprintf("Will patch agent_endpoint on agent %q", agentDef.Name))
+	}
+	if agentDef.AgentCard != nil {
+		changes = append(changes, fmt.Sprintf("Will patch agent_card on agent %q", agentDef.Name))
+	}
+	confirmCmd := "azd ai agent endpoint update"
+	if flags.name != "" {
+		confirmCmd += " " + flags.name
+	}
+	confirmCmd += " --force"
+	proceed, err := confirmWrite(ctx, ConfirmationRequest{
+		CommandPath:    "agent endpoint update",
+		Description:    fmt.Sprintf("Patch endpoint/card configuration for agent %q without redeploying.", agentDef.Name),
+		Classification: ConfirmationClassification{Idempotent: true},
+		Changes:        changes,
+		ConfirmCommand: confirmCmd,
+	}, *gate)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return nil
 	}
 
 	// Map YAML endpoint/card fields to API models (skips full definition validation).

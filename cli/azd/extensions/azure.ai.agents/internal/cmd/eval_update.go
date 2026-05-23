@@ -31,6 +31,7 @@ type evalUpdateFlags struct {
 
 func newEvalUpdateCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &evalUpdateFlags{config: defaultEvalConfigName}
+	gate := &confirmationGate{}
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update evaluators and datasets from local files.",
@@ -40,18 +41,41 @@ func newEvalUpdateCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 The version fields in the config are updated after successful uploads.
 
 In interactive mode, you will be prompted for each asset type that has
-local changes. Use --dataset-only or --evaluator-only to skip prompts.`,
+local changes. Use --dataset-only or --evaluator-only to skip prompts.
+
+Confirmation: this uploads new versions of remote resources. Pass --force
+to skip the prompt (or the agent confirmation envelope). Pass --dry-run
+to preview the upload set without sending it.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
 			logCleanup := setupDebugLogging(cmd.Flags())
 			defer logCleanup()
+			gate.noPrompt = extCtx.NoPrompt
+
+			proceed, err := confirmWrite(ctx, ConfirmationRequest{
+				CommandPath:    "agent eval update",
+				Description:    "Upload new versions of locally-edited evaluators and datasets.",
+				Classification: ConfirmationClassification{Idempotent: true},
+				Changes: []string{
+					"Will upload new versions for evaluators and/or datasets that have local changes",
+				},
+				ConfirmCommand: "azd ai agent eval update --force",
+			}, *gate)
+			if err != nil {
+				return err
+			}
+			if !proceed {
+				return nil
+			}
+
 			return runEvalUpdate(ctx, flags, extCtx.NoPrompt)
 		},
 	}
 	cmd.Flags().StringVar(&flags.config, "config", defaultEvalConfigName, "Local eval config YAML")
 	cmd.Flags().BoolVar(&flags.datasetOnly, "dataset-only", false, "Only update the dataset")
 	cmd.Flags().BoolVar(&flags.evaluatorOnly, "evaluator-only", false, "Only update evaluators")
+	registerConfirmationFlags(cmd, gate)
 	return cmd
 }
 

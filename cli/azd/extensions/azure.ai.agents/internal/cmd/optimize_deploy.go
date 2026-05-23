@@ -33,9 +33,11 @@ type optimizeDeployFlags struct {
 	optimizeConnectionFlags
 }
 
-func newOptimizeDeployCommand() *cobra.Command {
+func newOptimizeDeployCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
+	extCtx = ensureExtensionContext(extCtx)
 	flags := &optimizeDeployFlags{}
-	action := &OptimizeDeployAction{flags: flags}
+	gate := &confirmationGate{}
+	action := &OptimizeDeployAction{flags: flags, gate: gate}
 
 	cmd := &cobra.Command{
 		Use:   "deploy [agent-name]",
@@ -43,16 +45,21 @@ func newOptimizeDeployCommand() *cobra.Command {
 		Long: `Deploy an optimization candidate directly via the Foundry agent API.
 
 This creates a new agent version with the optimized configuration applied.
-Use 'optimize apply' instead if you want to localize the config into your azd project first.`,
+Use 'optimize apply' instead if you want to localize the config into your azd project first.
+
+Confirmation: this creates a new deployed agent version. Pass --force to
+skip the prompt (or the agent confirmation envelope). Pass --dry-run to
+preview the deployment without sending it.`,
 		Example: `  # Deploy candidate directly
   azd ai agent optimize deploy --candidate candidate_abc123 --agent my-agent
 
-  # Deploy with explicit endpoint
-  azd ai agent optimize deploy --candidate candidate_abc123 --agent my-agent --project-endpoint https://...`,
+  # Preview without deploying
+  azd ai agent optimize deploy --candidate candidate_abc123 --agent my-agent --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
 			setupDebugLogging(cmd.Flags())
+			gate.noPrompt = extCtx.NoPrompt
 
 			if len(args) > 0 && flags.agent == "" {
 				flags.agent = args[0]
@@ -66,6 +73,7 @@ Use 'optimize apply' instead if you want to localize the config into your azd pr
 	cmd.Flags().StringVar(&flags.agent, "agent", "", "Agent name to deploy to (auto-detected from agent.yaml)")
 	_ = cmd.MarkFlagRequired("candidate")
 	flags.optimizeConnectionFlags.register(cmd)
+	registerConfirmationFlags(cmd, gate)
 
 	return cmd
 }
@@ -73,29 +81,52 @@ Use 'optimize apply' instead if you want to localize the config into your azd pr
 // OptimizeDeployAction implements the optimize deploy command.
 type OptimizeDeployAction struct {
 	flags *optimizeDeployFlags
+	gate  *confirmationGate
 }
 
 func (a *OptimizeDeployAction) Run(ctx context.Context, cmd *cobra.Command) error {
-	out := cmd.OutOrStdout()
-	bold := color.New(color.Bold)
-
-	return a.runDirect(ctx, out, bold)
-}
-
-// runDirect deploys a candidate directly via the Foundry agent API.
-// TODO: Change this to full remote deployment here if not in an azd project
-func (a *OptimizeDeployAction) runDirect(
-	ctx context.Context,
-	out io.Writer,
-	bold *color.Color,
-) error {
-	// Resolve agent name from flag or agent.yaml in current directory.
+	// Resolve agent name FIRST so the confirmation envelope and prompt
+	// can show the real name (rather than a placeholder), and so the
+	// pre-flight "missing agent name" error surfaces before the user is
+	// asked to confirm anything.
 	resolved, err := resolveOptimizeAgent(ctx, a.flags.agent, false)
 	if err != nil {
 		return err
 	}
-	agentName := resolved.agentName
+	a.flags.agent = resolved.agentName
 
+	proceed, err := confirmWrite(ctx, ConfirmationRequest{
+		CommandPath: "agent optimize deploy",
+		Description: fmt.Sprintf("Deploy optimization candidate %s as a new version of agent %s.", a.flags.candidate, resolved.agentName),
+		Changes: []string{
+			fmt.Sprintf("Will create a new deployed agent version on %s with candidate %s applied",
+				resolved.agentName, a.flags.candidate),
+		},
+		ConfirmCommand: fmt.Sprintf("azd ai agent optimize deploy --candidate %s --agent %s --force",
+			a.flags.candidate, resolved.agentName),
+	}, *a.gate)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return nil
+	}
+
+	out := cmd.OutOrStdout()
+	bold := color.New(color.Bold)
+
+	return a.runDirectWithName(ctx, resolved.agentName, out, bold)
+}
+
+// runDirectWithName deploys a candidate directly via the Foundry agent API.
+// Accepts the already-resolved agent name from Run so the agent lookup
+// isn't repeated.
+func (a *OptimizeDeployAction) runDirectWithName(
+	ctx context.Context,
+	agentName string,
+	out io.Writer,
+	bold *color.Color,
+) error {
 	// Resolve project endpoint (for Foundry agent API).
 	projectEndpoint, err := resolveProjectEndpointForDeploy(ctx, &a.flags.optimizeConnectionFlags)
 	if err != nil {

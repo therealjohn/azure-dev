@@ -54,6 +54,7 @@ type evalInitFlags struct {
 
 func newEvalInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &evalInitFlags{maxSamples: defaultEvalSamples, output: defaultEvalConfigName}
+	gate := &confirmationGate{}
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Generate a local eval suite for a deployed agent.",
@@ -61,11 +62,16 @@ func newEvalInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 
 By default, this command submits dataset and evaluator generation jobs, waits for
 completion, downloads review artifacts, and writes eval.yaml at
-the agent project root. Use --no-wait to write pending operation IDs and return.`,
+the agent project root. Use --no-wait to write pending operation IDs and return.
+
+Confirmation: this submits billed generation jobs. Pass --force to skip the
+prompt (or the agent confirmation envelope). Pass --dry-run to preview the
+generation request without submitting.`,
 		Example: `  azd ai agent eval init
   azd ai agent eval init --gen-instruction "This agent handles restaurant reservations." --eval-model gpt-4o --max-samples 50
   azd ai agent eval init --gen-instruction-file ./instructions.md --eval-model gpt-4o
-  azd ai agent eval init --dataset ./tests/golden.jsonl --evaluator builtin.intent_resolution`,
+  azd ai agent eval init --dataset ./tests/golden.jsonl --evaluator builtin.intent_resolution
+  azd ai agent eval init --dry-run`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
@@ -73,6 +79,24 @@ the agent project root. Use --no-wait to write pending operation IDs and return.
 			defer logCleanup()
 			flags.evalModelSet = cmd.Flags().Changed("eval-model")
 			flags.maxSamplesSet = cmd.Flags().Changed("max-samples")
+			gate.noPrompt = extCtx.NoPrompt
+
+			proceed, err := confirmWrite(ctx, ConfirmationRequest{
+				CommandPath: "agent eval init",
+				Description: "Generate a local eval suite for the deployed agent.",
+				Changes: []string{
+					"Will submit billed dataset and evaluator generation jobs",
+					fmt.Sprintf("Will write eval config to %s", flags.output),
+				},
+				ConfirmCommand: "azd ai agent eval init --force",
+			}, *gate)
+			if err != nil {
+				return err
+			}
+			if !proceed {
+				return nil
+			}
+
 			return runEvalInit(ctx, flags, extCtx.NoPrompt)
 		},
 	}
@@ -90,6 +114,7 @@ the agent project root. Use --no-wait to write pending operation IDs and return.
 	cmd.Flags().StringVar(&flags.output, "out-file", defaultEvalConfigName, "Eval config path")
 	cmd.Flags().IntVar(&flags.traceDays, "trace-days", 0, "Include agent traces from the last N days for evaluator generation (0 = no traces)")
 	cmd.Flags().BoolVar(&flags.resetDefaults, "reset-defaults", false, "Overwrite an existing eval config")
+	registerConfirmationFlags(cmd, gate)
 
 	return cmd
 }

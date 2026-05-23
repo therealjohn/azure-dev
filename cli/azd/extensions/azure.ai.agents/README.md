@@ -30,7 +30,48 @@ naming the flag(s) the caller should pass instead.
 | ---- | ------- |
 | `0`  | Success. |
 | `1`  | Error. The command emitted a structured error describing the cause. |
-| `2`  | Reserved for an upcoming confirmation-required protocol on write commands. Today only `azd ai agent doctor` returns `2`, meaning all checks were skipped (e.g. preconditions unmet). |
+| `2`  | Confirmation required. A write command was invoked without `--force` from a non-interactive context (e.g. `--no-prompt` or no TTY). The command wrote a JSON envelope to stdout describing what would happen; re-run the `confirmCommand` to proceed. Also returned by `azd ai agent doctor` when all checks were skipped (preconditions unmet). |
+
+### Confirmation envelope for write commands
+
+Write commands (e.g. `update`, `invoke`, `files delete`, `sessions delete`,
+`optimize cancel`, `optimize`, `optimize apply`, `optimize deploy`,
+`eval init|run|update`, `endpoint update`) accept the agent-friendly flags
+`--dry-run` and `--force`:
+
+- `--dry-run` -- emits the confirmation envelope to stdout and exits 0 without
+  mutating any state. Use this to preview what a command would do.
+- `--force` -- skips the prompt or envelope and runs immediately.
+
+When neither flag is set and the caller is non-interactive (`--no-prompt` or
+no TTY), the command writes the envelope below to stdout and exits `2`:
+
+```json
+{
+  "status": "confirmation_required",
+  "command": "agent files delete",
+  "description": "Delete report.csv from agent \"my-agent\".",
+  "classification": {
+    "readOnly": false,
+    "destructive": true,
+    "idempotent": false
+  },
+  "changes": [
+    "Will delete report.csv from session sess-1 on agent my-agent"
+  ],
+  "confirmCommand": "azd ai agent files delete report.csv --session-id sess-1 --force"
+}
+```
+
+Agents and scripts should:
+
+1. Present `description` and `changes` to the user.
+2. Re-run `confirmCommand` exactly as printed once approved.
+3. Never auto-append `--force` -- the explicit re-invocation IS the human consent.
+
+When a terminal is attached and `--force` is not set, the same description
+and bullet list are rendered to stderr and the azd host prompts the user
+for yes/no confirmation.
 
 ## Running Local Agents
 

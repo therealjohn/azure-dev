@@ -41,7 +41,8 @@ type optimizeApplyFlags struct {
 
 func newOptimizeApplyCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &optimizeApplyFlags{}
-	action := &OptimizeApplyAction{flags: flags, noPrompt: extCtx.NoPrompt}
+	gate := &confirmationGate{}
+	action := &OptimizeApplyAction{flags: flags, gate: gate, noPrompt: extCtx.NoPrompt}
 
 	cmd := &cobra.Command{
 		Use:   "apply",
@@ -49,14 +50,22 @@ func newOptimizeApplyCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 		Long: `Download the optimized configuration and skill files from an optimization
 candidate and write them into your local azd project under .agent_configs/.
 
-After applying, run 'azd deploy' to deploy the optimized agent version.`,
+After applying, run 'azd deploy' to deploy the optimized agent version.
+
+Confirmation: this writes files to your project. Pass --force to skip the
+prompt (or the agent confirmation envelope). Pass --dry-run to preview
+the files that would be written without modifying anything.`,
 		Example: `  # Apply candidate config locally, then deploy
   azd ai agent optimize apply --candidate candidate_abc123
-  azd deploy`,
+  azd deploy
+
+  # Preview without writing files
+  azd ai agent optimize apply --candidate candidate_abc123 --dry-run`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
 			setupDebugLogging(cmd.Flags())
+			gate.noPrompt = extCtx.NoPrompt
 			return action.Run(ctx, cmd)
 		},
 	}
@@ -65,6 +74,7 @@ After applying, run 'azd deploy' to deploy the optimized agent version.`,
 	cmd.Flags().StringVar(&flags.agent, "agent", "", "Agent service name (auto-detected from azure.yaml)")
 	_ = cmd.MarkFlagRequired("candidate")
 	flags.optimizeConnectionFlags.register(cmd)
+	registerConfirmationFlags(cmd, gate)
 
 	return cmd
 }
@@ -72,6 +82,7 @@ After applying, run 'azd deploy' to deploy the optimized agent version.`,
 // OptimizeApplyAction implements the optimize apply command.
 type OptimizeApplyAction struct {
 	flags    *optimizeApplyFlags
+	gate     *confirmationGate
 	noPrompt bool
 }
 
@@ -90,6 +101,23 @@ func (a *OptimizeApplyAction) Run(ctx context.Context, cmd *cobra.Command) error
 	if err != nil || project == nil || svc == nil {
 		return fmt.Errorf("could not resolve agent service in azd project: %w\n\n"+
 			"Run 'azd ai agent init' first, or use 'optimize deploy' for standalone API deployment", err)
+	}
+
+	// Confirmation gate -- apply writes files into the user's project.
+	proceed, err := confirmWrite(ctx, ConfirmationRequest{
+		CommandPath: "agent optimize apply",
+		Description: fmt.Sprintf("Apply optimization candidate %s to agent service %q.", a.flags.candidate, svc.Name),
+		Changes: []string{
+			fmt.Sprintf("Will write candidate %s files under %s/%s/", a.flags.candidate, svc.RelativePath, agentConfigsDir),
+			fmt.Sprintf("Will update env vars in %s/agent.yaml", svc.RelativePath),
+		},
+		ConfirmCommand: fmt.Sprintf("azd ai agent optimize apply --candidate %s --force", a.flags.candidate),
+	}, *a.gate)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return nil
 	}
 
 	return a.apply(ctx, azdClient, svc, project, out, bold)

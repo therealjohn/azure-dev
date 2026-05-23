@@ -489,6 +489,7 @@ type FilesRemoveAction struct {
 
 func newFilesRemoveCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &filesRemoveFlags{}
+	gate := &confirmationGate{}
 	var filePath string
 	extCtx = ensureExtensionContext(extCtx)
 
@@ -501,15 +502,19 @@ func newFilesRemoveCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 Deletes the specified file or directory from the session's filesystem.
 Use --recursive to delete directories and their contents.
 
-Agent details are automatically resolved from the azd environment.`,
-		Example: `  # Delete a file (agent auto-detected)
+Agent details are automatically resolved from the azd environment.
+
+Confirmation: this is a destructive write. Pass --force to skip the prompt
+(or the confirmation envelope in agent mode). Pass --dry-run to preview
+what would be deleted without mutating anything.`,
+		Example: `  # Delete a file (agent auto-detected; prompts to confirm)
   azd ai agent files delete /data/old-file.csv
 
-  # Delete a directory recursively
-  azd ai agent files delete /data/temp --recursive
+  # Delete a directory recursively after confirming
+  azd ai agent files delete /data/temp --recursive --force
 
-  # Delete with flags
-  azd ai agent files delete --file /data/old-file.csv --session-id <session-id>`,
+  # Preview without deleting
+  azd ai agent files delete /data/old-file.csv --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
@@ -524,9 +529,28 @@ Agent details are automatically resolved from the azd environment.`,
 				)
 			}
 
+			gate.noPrompt = extCtx.NoPrompt
+
 			fc, err := resolveFilesContext(ctx, &flags.filesFlags, extCtx.NoPrompt)
 			if err != nil {
 				return err
+			}
+
+			proceed, err := confirmWrite(ctx, ConfirmationRequest{
+				CommandPath:    "agent files delete",
+				Description:    fmt.Sprintf("Delete %s from agent %q.", filePath, fc.AgentContext.Name),
+				Classification: ConfirmationClassification{Destructive: true},
+				Changes: []string{
+					fmt.Sprintf("Will delete %s from session %s on agent %s",
+						filePath, fc.sessionID, fc.AgentContext.Name),
+				},
+				ConfirmCommand: confirmCommandForFilesDelete(filePath, flags.recursive, fc.sessionID),
+			}, *gate)
+			if err != nil {
+				return err
+			}
+			if !proceed {
+				return nil
 			}
 
 			action := &FilesRemoveAction{
@@ -543,8 +567,23 @@ Agent details are automatically resolved from the azd environment.`,
 	addFilesFlags(cmd, &flags.filesFlags)
 	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Remote file or directory path to delete")
 	cmd.Flags().BoolVar(&flags.recursive, "recursive", false, "Recursively delete directories and their contents")
+	registerConfirmationFlags(cmd, gate)
 
 	return cmd
+}
+
+// confirmCommandForFilesDelete renders the exact command the agent must
+// re-run with --force. Including session-id makes the re-run hermetic even
+// if the auto-resolved session has changed between runs.
+func confirmCommandForFilesDelete(filePath string, recursive bool, sessionID string) string {
+	cmd := fmt.Sprintf("azd ai agent files delete %s", filePath)
+	if recursive {
+		cmd += " --recursive"
+	}
+	if sessionID != "" {
+		cmd += fmt.Sprintf(" --session-id %s", sessionID)
+	}
+	return cmd + " --force"
 }
 
 // Run executes the remove action.

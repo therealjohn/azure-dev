@@ -91,7 +91,8 @@ type optimizeFlags struct {
 // newOptimizeCommand creates the top-level "optimize" command and registers its subcommands.
 func newOptimizeCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	flags := &optimizeFlags{}
-	action := &OptimizeAction{flags: flags, noPrompt: extCtx.NoPrompt}
+	gate := &confirmationGate{}
+	action := &OptimizeAction{flags: flags, gate: gate, noPrompt: extCtx.NoPrompt}
 
 	cmd := &cobra.Command{
 		Use:   "optimize [agent-name]",
@@ -99,7 +100,11 @@ func newOptimizeCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 		Long: `Evaluate and optimize AI agents — baseline scoring and iterative improvement.
 
 When run without a subcommand, submits an optimization job.
-Use --config for a custom YAML spec, or just provide the agent name to use sensible defaults.`,
+Use --config for a custom YAML spec, or just provide the agent name to use sensible defaults.
+
+Confirmation: submitting an optimization job is billed and can take minutes
+to hours. Pass --force to skip the prompt (or the agent confirmation envelope).
+Pass --dry-run to preview the submission without running the job.`,
 		Example: `  # Optimize (auto-detect agent from azd project)
   azd ai agent optimize
 
@@ -115,6 +120,9 @@ Use --config for a custom YAML spec, or just provide the agent name to use sensi
   # Full control via config file
   azd ai agent optimize --config spec.yaml
 
+  # Preview without submitting
+  azd ai agent optimize --dry-run
+
   # Subcommands
   azd ai agent optimize status <id> --watch
   azd ai agent optimize list
@@ -124,6 +132,7 @@ Use --config for a custom YAML spec, or just provide the agent name to use sensi
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := azdext.WithAccessToken(cmd.Context())
 			setupDebugLogging(cmd.Flags())
+			gate.noPrompt = extCtx.NoPrompt
 
 			// Positional arg fills in agent name
 			if len(args) > 0 && flags.agent == "" {
@@ -142,12 +151,13 @@ Use --config for a custom YAML spec, or just provide the agent name to use sensi
 	cmd.Flags().BoolVar(&flags.noWait, "no-wait", false, "Submit job and return immediately without waiting for completion")
 	cmd.Flags().IntVar(&flags.pollInterval, "poll-interval", 5, "Polling interval in seconds")
 	flags.optimizeConnectionFlags.register(cmd)
+	registerConfirmationFlags(cmd, gate)
 
 	cmd.AddCommand(newOptimizeStatusCommand(extCtx))
 	cmd.AddCommand(newOptimizeListCommand(extCtx))
-	cmd.AddCommand(newOptimizeCancelCommand())
+	cmd.AddCommand(newOptimizeCancelCommand(extCtx))
 	cmd.AddCommand(newOptimizeApplyCommand(extCtx))
-	cmd.AddCommand(newOptimizeDeployCommand())
+	cmd.AddCommand(newOptimizeDeployCommand(extCtx))
 
 	return cmd
 }
@@ -155,6 +165,7 @@ Use --config for a custom YAML spec, or just provide the agent name to use sensi
 // OptimizeAction implements the optimize (submit job) command.
 type OptimizeAction struct {
 	flags    *optimizeFlags
+	gate     *confirmationGate
 	noPrompt bool
 }
 
@@ -173,6 +184,31 @@ func (a *OptimizeAction) Run(ctx context.Context, cmd *cobra.Command) error {
 
 	if err := a.applyOverrides(ctx, cfg, agentProject); err != nil {
 		return err
+	}
+
+	// Confirmation gate -- submission is billed and can take a long time.
+	confirmCmd := "azd ai agent optimize"
+	if a.flags.agent != "" {
+		confirmCmd += " " + a.flags.agent
+	}
+	if a.flags.configFile != "" {
+		confirmCmd += fmt.Sprintf(" --config %s", a.flags.configFile)
+	}
+	confirmCmd += " --force"
+	proceed, err := confirmWrite(ctx, ConfirmationRequest{
+		CommandPath: "agent optimize",
+		Description: fmt.Sprintf("Submit an optimization job for agent %q.", cfg.Agent.Name),
+		Changes: []string{
+			fmt.Sprintf("Will submit a billed optimization run for agent %s; results may take minutes to hours",
+				cfg.Agent.Name),
+		},
+		ConfirmCommand: confirmCmd,
+	}, *a.gate)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		return nil
 	}
 
 	out := cmd.OutOrStdout()
