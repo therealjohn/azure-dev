@@ -75,24 +75,18 @@ configuration and the current azd environment. Optionally specify the service na
 			}
 			defer azdClient.Close()
 
-			info, err := resolveAgentServiceFromProject(ctx, azdClient, flags.name, extCtx.NoPrompt)
-			if err != nil {
-				return err
-			}
-
-			if info.AgentName == "" {
-				return fmt.Errorf(
-					"agent name could not be resolved from azd environment for service '%s'\n\n"+
-						"Run 'azd deploy' first to deploy the agent, or check your azd environment values",
-					info.ServiceName,
-				)
-			}
-			if info.Version == "" {
-				return fmt.Errorf(
-					"agent version could not be resolved from azd environment for service '%s'\n\n"+
-						"Run 'azd deploy' first to deploy the agent, or check your azd environment values",
-					info.ServiceName,
-				)
+			// Graceful-degrade: instead of hard-erroring when the agent
+			// service / name / version can't be resolved, return a
+			// `{agent: null, status: "not_deployed", next_step}` payload so
+			// `azd ai agent show` can serve as an agent's first
+			// situational-awareness call BEFORE anything is deployed.
+			//
+			// The `next_step` envelope points at both:
+			//   - `azd ai agent project show` for surrounding context
+			//   - `azd ai agent init` / `azd deploy` for forward action
+			info, infoErr := resolveAgentServiceFromProject(ctx, azdClient, flags.name, extCtx.NoPrompt)
+			if infoErr != nil || info == nil || info.AgentName == "" || info.Version == "" {
+				return renderNotDeployed(flags.output, infoErr, info)
 			}
 
 			agentContext, err := newAgentContext(ctx, "", "", info.AgentName, info.Version)
@@ -126,6 +120,75 @@ configuration and the current azd environment. Optionally specify the service na
 	})
 
 	return cmd
+}
+
+// notDeployedPayload is the JSON shape `azd ai agent show` emits when no
+// deployed agent can be resolved. Backward-compatible additions to the
+// existing showResult are limited to `agent: null` and `status` -- previously
+// these conditions produced a hard error.
+type notDeployedPayload struct {
+	Agent    *string           `json:"agent"`
+	Status   string            `json:"status"`
+	Service  string            `json:"service,omitempty"`
+	NextStep *nextStepEnvelope `json:"next_step,omitempty"`
+}
+
+// renderNotDeployed writes the graceful-degrade payload in either output
+// format. Returns nil so the CLI exits 0 -- callers reading the payload
+// then know what to do next.
+func renderNotDeployed(output string, infoErr error, info *AgentServiceInfo) error {
+	serviceName := ""
+	if info != nil {
+		serviceName = info.ServiceName
+	}
+
+	next := &nextStepEnvelope{
+		Suggestions: []nextStepSuggestion{
+			{
+				Command:     "azd ai agent project show --output json",
+				Description: "Inspect identity, subscription, and project context.",
+			},
+		},
+	}
+	if serviceName != "" {
+		next.Suggestions = append(next.Suggestions, nextStepSuggestion{
+			Command:     "azd deploy",
+			Description: fmt.Sprintf("Deploy agent service %q.", serviceName),
+		})
+	} else {
+		next.Suggestions = append(next.Suggestions, nextStepSuggestion{
+			Command:     "azd ai agent init",
+			Description: "Initialize a new agent project in this directory.",
+		})
+	}
+
+	payload := notDeployedPayload{
+		Agent:    nil,
+		Status:   "not_deployed",
+		Service:  serviceName,
+		NextStep: next,
+	}
+
+	if isJSONOutput(output) {
+		return printJSON(os.Stdout, payload)
+	}
+
+	// Table path: render a small human-friendly block on stdout, then the
+	// next-step suggestions. infoErr may add useful context (e.g. "no
+	// azure.yaml" vs "agent not yet deployed") -- include it inline.
+	fmt.Println("Status: not_deployed")
+	if serviceName != "" {
+		fmt.Printf("Service: %s\n", serviceName)
+	}
+	if infoErr != nil {
+		fmt.Printf("Detail: %s\n", infoErr)
+	}
+	fmt.Println()
+	fmt.Println("Next:")
+	for _, s := range next.Suggestions {
+		fmt.Printf("  %s  -- %s\n", s.Command, s.Description)
+	}
+	return nil
 }
 
 // showResult wraps the API response with additional computed links.
