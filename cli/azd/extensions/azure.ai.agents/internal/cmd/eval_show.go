@@ -22,12 +22,16 @@ import (
 
 // evalShowFlags holds CLI flags for the eval show command.
 type evalShowFlags struct {
-	evalRunID string // specific eval run to show
-	limit     int    // maximum number of runs to display
-	output    string // export results to JSON file
+	evalRunID       string // specific eval run to show
+	limit           int    // maximum number of runs to display
+	outFile         string // export full results to a JSON file
+	output          string // table or json (stdout format)
+	noPrompt        bool   // refuse to prompt the user
+	projectEndpoint string // explicit project endpoint override
 }
 
-func newEvalShowCommand() *cobra.Command {
+func newEvalShowCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
+	extCtx = ensureExtensionContext(extCtx)
 	flags := &evalShowFlags{limit: 20}
 	cmd := &cobra.Command{
 		Use:   "show [eval-id]",
@@ -41,6 +45,12 @@ If eval-id is omitted, the most recent eval from the current environment is used
 			logCleanup := setupDebugLogging(cmd.Flags())
 			defer logCleanup()
 
+			flags.output = extCtx.OutputFormat
+			flags.noPrompt = extCtx.NoPrompt
+			if err := validateOutputFormat(flags.output); err != nil {
+				return err
+			}
+
 			var evalID string
 			if len(args) > 0 {
 				evalID = args[0]
@@ -50,12 +60,19 @@ If eval-id is omitted, the most recent eval from the current environment is used
 	}
 	cmd.Flags().StringVar(&flags.evalRunID, "eval-run-id", "", "Show details for a specific eval run")
 	cmd.Flags().IntVar(&flags.limit, "limit", 20, "Maximum number of runs to show")
-	cmd.Flags().StringVarP(&flags.output, "out-file", "O", "", "Export full run results to a JSON file")
+	cmd.Flags().StringVarP(&flags.outFile, "out-file", "O", "", "Export full run results to a JSON file")
+	cmd.Flags().StringVarP(&flags.projectEndpoint, "project-endpoint", "p", "",
+		"Foundry project endpoint URL (overrides env var and config)")
+	registerAgentOutputFlag(cmd)
 	return cmd
 }
 
 func runEvalShow(ctx context.Context, evalID string, flags *evalShowFlags) error {
-	resolved, err := resolveEvalContext(ctx, evalContextOptions{})
+	resolved, err := resolveEvalContext(ctx, evalContextOptions{
+		noPrompt:        flags.noPrompt,
+		projectEndpoint: flags.projectEndpoint,
+		quiet:           isJSONOutput(flags.output),
+	})
 	if err != nil {
 		return err
 	}
@@ -75,8 +92,11 @@ func runEvalShow(ctx context.Context, evalID string, flags *evalShowFlags) error
 		if err != nil {
 			return fmt.Errorf("failed to get eval run: %w", err)
 		}
-		if flags.output != "" {
-			return eval_api.WriteJSONFile(flags.output, run)
+		if flags.outFile != "" {
+			return eval_api.WriteJSONFile(flags.outFile, run)
+		}
+		if isJSONOutput(flags.output) {
+			return printJSON(os.Stdout, map[string]any{"eval": evalID, "run": run})
 		}
 		return printEvalRunSummary(evalID, run)
 	}
@@ -89,8 +109,14 @@ func runEvalShow(ctx context.Context, evalID string, flags *evalShowFlags) error
 	if err != nil {
 		return fmt.Errorf("failed to list eval runs: %w", err)
 	}
-	if flags.output != "" {
-		return eval_api.WriteJSONFile(flags.output, map[string]any{
+	if flags.outFile != "" {
+		return eval_api.WriteJSONFile(flags.outFile, map[string]any{
+			"eval": evalObj,
+			"runs": runs.Data,
+		})
+	}
+	if isJSONOutput(flags.output) {
+		return printJSON(os.Stdout, map[string]any{
 			"eval": evalObj,
 			"runs": runs.Data,
 		})

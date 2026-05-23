@@ -6,6 +6,7 @@ package cmd
 import (
 	"testing"
 
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,22 +17,27 @@ import (
 
 func TestNewEvalListCommand_Flags(t *testing.T) {
 	t.Parallel()
-	cmd := newEvalListCommand()
+	cmd := newEvalListCommand(&azdext.ExtensionContext{})
 
 	f := cmd.Flags().Lookup("limit")
 	require.NotNil(t, f)
 	assert.Equal(t, "10", f.DefValue)
+
+	// --output is inherited from azd globals; verify the SDK annotations
+	// were attached on the leaf so allowed values surface in help text.
+	require.NotEmpty(t, cmd.Annotations,
+		"registerAgentOutputFlag should attach SDK annotations to the command")
 }
 
 func TestNewEvalListCommand_NoArgs(t *testing.T) {
 	t.Parallel()
-	cmd := newEvalListCommand()
+	cmd := newEvalListCommand(&azdext.ExtensionContext{})
 	assert.NoError(t, cmd.Args(cmd, nil))
 	assert.Error(t, cmd.Args(cmd, []string{"extra"}))
 }
 
 func TestNewEvalListCommand_UseString(t *testing.T) {
 	t.Parallel()
-	cmd := newEvalListCommand()
+	cmd := newEvalListCommand(&azdext.ExtensionContext{})
 	assert.Equal(t, "list", cmd.Use)
 }

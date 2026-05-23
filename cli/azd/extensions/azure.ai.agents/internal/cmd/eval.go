@@ -76,6 +76,20 @@ type evalContextOptions struct {
 	projectEndpoint string // explicit project endpoint (from --project-endpoint flag)
 	requireAgent    bool   // fail if agent name cannot be resolved
 	noPrompt        bool   // skip interactive prompts
+	// quiet suppresses progress lines on stdout so JSON callers receive a
+	// single parseable payload. Errors and prompts still surface normally
+	// because they go to stderr or the azd host prompt channel.
+	quiet bool
+}
+
+// progressln writes a status line to stdout in non-quiet mode. Centralizing
+// the check keeps every progress site in this file consistent with the
+// `quiet` option that JSON-output leaves pass in.
+func (o evalContextOptions) progressln(s string) {
+	if o.quiet {
+		return
+	}
+	fmt.Println(output.WithGrayFormat("%s", s))
 }
 
 func newEvalCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
@@ -95,8 +109,8 @@ Subcommands:
 	cmd.AddCommand(newEvalInitCommand(extCtx))
 	cmd.AddCommand(newEvalRunCommand(extCtx))
 	cmd.AddCommand(newEvalUpdateCommand(extCtx))
-	cmd.AddCommand(newEvalListCommand())
-	cmd.AddCommand(newEvalShowCommand())
+	cmd.AddCommand(newEvalListCommand(extCtx))
+	cmd.AddCommand(newEvalShowCommand(extCtx))
 
 	return cmd
 }
@@ -105,14 +119,14 @@ Subcommands:
 // environment variables, and optionally prompting the user. It returns an evalResolvedContext
 // with API clients and metadata needed to run eval commands.
 func resolveEvalContext(ctx context.Context, options evalContextOptions) (*evalResolvedContext, error) {
-	fmt.Println(output.WithGrayFormat("Resolving eval context..."))
+	options.progressln("Resolving eval context...")
 
 	azdClient, err := azdext.NewAzdClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create azd client: %w", err)
 	}
 
-	fmt.Println(output.WithGrayFormat("  Reading project configuration..."))
+	options.progressln("  Reading project configuration...")
 	projectResponse, err := azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 
 	// If no azd workspace is found, fall back to prompt-based resolution.
@@ -121,7 +135,7 @@ func resolveEvalContext(ctx context.Context, options evalContextOptions) (*evalR
 	}
 	project := projectResponse.Project
 
-	fmt.Println(output.WithGrayFormat("  Detecting agent service..."))
+	options.progressln("  Detecting agent service...")
 
 	// Read the current azd environment once — used for agent info, endpoint, and env name.
 	var envName string
@@ -161,7 +175,7 @@ func resolveEvalContext(ctx context.Context, options evalContextOptions) (*evalR
 		return nil, evalAgentContextError(err)
 	}
 
-	fmt.Println(output.WithGrayFormat("  Resolving Foundry project endpoint..."))
+	options.progressln("  Resolving Foundry project endpoint...")
 	projectEndpoint := options.projectEndpoint
 	projectEndpointSource := "--project-endpoint"
 	if projectEndpoint == "" {
@@ -277,7 +291,7 @@ func resolveEvalContextWithoutProject(
 	azdClient *azdext.AzdClient,
 	options evalContextOptions,
 ) (*evalResolvedContext, error) {
-	fmt.Println(output.WithGrayFormat("  No azd project found. Prompting for inputs..."))
+	options.progressln("  No azd project found. Prompting for inputs...")
 
 	projectEndpoint := options.projectEndpoint
 	agentName := options.agent

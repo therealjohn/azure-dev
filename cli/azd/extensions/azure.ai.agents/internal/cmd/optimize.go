@@ -143,8 +143,8 @@ Use --config for a custom YAML spec, or just provide the agent name to use sensi
 	cmd.Flags().IntVar(&flags.pollInterval, "poll-interval", 5, "Polling interval in seconds")
 	flags.optimizeConnectionFlags.register(cmd)
 
-	cmd.AddCommand(newOptimizeStatusCommand())
-	cmd.AddCommand(newOptimizeListCommand())
+	cmd.AddCommand(newOptimizeStatusCommand(extCtx))
+	cmd.AddCommand(newOptimizeListCommand(extCtx))
 	cmd.AddCommand(newOptimizeCancelCommand())
 	cmd.AddCommand(newOptimizeApplyCommand(extCtx))
 	cmd.AddCommand(newOptimizeDeployCommand())
@@ -428,6 +428,8 @@ func (a *OptimizeAction) submitJob(
 }
 
 // pollOptimizeJob polls the optimization job until it reaches a terminal state.
+// Renders a spinner via cmd.OutOrStdout(); use pollOptimizeJobSilent for JSON
+// callers that must not contaminate stdout with progress text.
 func pollOptimizeJob(
 	cmd *cobra.Command,
 	client *optimize_api.OptimizeClient,
@@ -468,6 +470,29 @@ func pollOptimizeJob(
 
 	finalStatus, err := poller.PollUntilDone(cmd.Context())
 	fmt.Fprintln(out)
+	if err != nil {
+		return nil, fmt.Errorf("failed while polling optimization job: %w", err)
+	}
+
+	return finalStatus, nil
+}
+
+// pollOptimizeJobSilent polls without writing any progress text. Used by the
+// `--output json` path so stdout stays a single parseable payload.
+func pollOptimizeJobSilent(
+	ctx context.Context,
+	client *optimize_api.OptimizeClient,
+	pollInterval int,
+	operationID string,
+) (*optimize_api.OptimizeJobStatus, error) {
+	poller := &optimize_api.Poller{
+		Client:      client,
+		OperationID: operationID,
+		Interval:    time.Duration(pollInterval) * time.Second,
+		// OnProgress intentionally nil — JSON callers want exactly one payload.
+	}
+
+	finalStatus, err := poller.PollUntilDone(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed while polling optimization job: %w", err)
 	}

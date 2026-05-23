@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -23,9 +24,11 @@ import (
 type doctorFlags struct {
 	localOnly  bool
 	unredacted bool
+	output     string
 }
 
-func newDoctorCommand() *cobra.Command {
+func newDoctorCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
+	extCtx = ensureExtensionContext(extCtx)
 	flags := &doctorFlags{}
 
 	cmd := &cobra.Command{
@@ -43,9 +46,17 @@ Exit codes:
   1 — any check failed
   2 — all checks were skipped (e.g. preconditions unmet)`,
 		Example: `  # Run the full check suite
-  azd ai agent doctor`,
+  azd ai agent doctor
+
+  # JSON output for scripting and agents
+  azd ai agent doctor --output json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			flags.output = extCtx.OutputFormat
+			if err := validateOutputFormat(flags.output); err != nil {
+				return err
+			}
+
 			ctx := azdext.WithAccessToken(cmd.Context())
 			logCleanup := setupDebugLogging(cmd.Flags())
 			defer logCleanup()
@@ -73,7 +84,13 @@ Exit codes:
 				Unredacted: flags.unredacted,
 			}
 
-			report, err := runAndRenderDoctorText(ctx, deps, opts, azdClient, os.Stdout, debug)
+			var report doctor.Report
+			var err error
+			if isJSONOutput(flags.output) {
+				report, err = runAndRenderDoctorJSON(ctx, deps, opts, azdClient, os.Stdout)
+			} else {
+				report, err = runAndRenderDoctorText(ctx, deps, opts, azdClient, os.Stdout, debug)
+			}
 			if err != nil {
 				return err
 			}
@@ -99,6 +116,7 @@ Exit codes:
 		&flags.unredacted, "unredacted", false,
 		"Show raw principal IDs, scope ARNs, and UPNs in the report.",
 	)
+	registerAgentOutputFlag(cmd)
 
 	return cmd
 }
@@ -135,6 +153,38 @@ func runAndRenderDoctorText(
 	showNext := len(trailing) > 0 && writerIsTerminal(w)
 	if err := renderer.writeFooter(report, trailing, showNext); err != nil {
 		return report, err
+	}
+	return report, nil
+}
+
+// runAndRenderDoctorJSON runs the same check sequence as the text path but
+// emits a single JSON object instead of streaming per-check lines. The output
+// shape matches doctor.Report's JSON tags exactly so machine consumers can
+// rely on the documented schema. Exit-code semantics are unchanged: the
+// caller still passes the returned report through doctor.ExitCode.
+func runAndRenderDoctorJSON(
+	ctx context.Context,
+	deps doctor.Dependencies,
+	opts doctor.Options,
+	azdClient *azdext.AzdClient,
+	w io.Writer,
+) (doctor.Report, error) {
+	// JSON output is silent during execution; observer stays nil so the
+	// runner accumulates results without streaming them to stdout.
+	report, _, err := runDoctorWithObserver(ctx, deps, opts, azdClient, nil)
+	if err != nil {
+		return report, err
+	}
+
+	data, marshalErr := json.MarshalIndent(report, "", "  ")
+	if marshalErr != nil {
+		return report, fmt.Errorf("marshaling doctor report to JSON: %w", marshalErr)
+	}
+	if _, writeErr := w.Write(data); writeErr != nil {
+		return report, writeErr
+	}
+	if _, writeErr := w.Write([]byte{'\n'}); writeErr != nil {
+		return report, writeErr
 	}
 	return report, nil
 }

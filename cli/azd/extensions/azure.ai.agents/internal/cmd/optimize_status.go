@@ -19,12 +19,14 @@ import (
 
 // optimizeStatusFlags holds CLI flags for the optimize status command.
 type optimizeStatusFlags struct {
-	watch        bool // poll until job completes
-	pollInterval int  // polling interval in seconds
+	watch        bool   // poll until job completes
+	pollInterval int    // polling interval in seconds
+	output       string // table or json
 	optimizeConnectionFlags
 }
 
-func newOptimizeStatusCommand() *cobra.Command {
+func newOptimizeStatusCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
+	extCtx = ensureExtensionContext(extCtx)
 	flags := &optimizeStatusFlags{}
 
 	cmd := &cobra.Command{
@@ -41,9 +43,17 @@ Use --watch to poll until the job completes.`,
   azd ai agent optimize status opt_abc123
 
   # Watch until complete
-  azd ai agent optimize status opt_abc123 --watch`,
+  azd ai agent optimize status opt_abc123 --watch
+
+  # JSON output for scripting / agents
+  azd ai agent optimize status opt_abc123 --output json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			flags.output = extCtx.OutputFormat
+			if err := validateOutputFormat(flags.output); err != nil {
+				return err
+			}
+
 			ctx := azdext.WithAccessToken(cmd.Context())
 			operationID := ""
 			if len(args) > 0 {
@@ -53,7 +63,9 @@ Use --watch to poll until the job completes.`,
 				if operationID == "" {
 					return fmt.Errorf("operation ID is required: provide it as an argument, or run 'azd ai agent optimize' first")
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  Using last job: %s\n\n", operationID)
+				if !isJSONOutput(flags.output) {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Using last job: %s\n\n", operationID)
+				}
 			}
 			return runOptimizeStatus(cmd, flags, operationID)
 		},
@@ -62,6 +74,7 @@ Use --watch to poll until the job completes.`,
 	cmd.Flags().BoolVar(&flags.watch, "watch", false, "Poll until job completes")
 	cmd.Flags().IntVar(&flags.pollInterval, "poll-interval", 5, "Polling interval in seconds")
 	flags.optimizeConnectionFlags.register(cmd)
+	registerAgentOutputFlag(cmd)
 
 	return cmd
 }
@@ -85,10 +98,33 @@ func runOptimizeStatus(cmd *cobra.Command, flags *optimizeStatusFlags, operation
 		return fmt.Errorf("failed to get job status: %w\n\nCheck that the operation ID %q is correct", err, operationID)
 	}
 
+	// JSON output: return the full status payload (and any final-poll
+	// replacement) as a single object so callers can parse it once.
+	if isJSONOutput(flags.output) {
+		finalStatus := status
+		if flags.watch && !optimize_api.IsTerminal(status.Status) {
+			finalStatus, err = pollOptimizeJobSilent(cmd.Context(), client, flags.pollInterval, operationID)
+			if err != nil {
+				return err
+			}
+		}
+		if err := printJSON(out, finalStatus); err != nil {
+			return err
+		}
+		if finalStatus.Error != nil {
+			return fmt.Errorf("optimization job failed: %s", finalStatus.Error.Message)
+		}
+		return nil
+	}
+
 	printOptimizeJobSummary(out, status)
 
+	// Text path: when --watch, the final-poll result becomes authoritative
+	// for both the candidate table and the exit-error check (the initial
+	// `status` is stale by then).
+	finalStatus := status
 	if flags.watch && !optimize_api.IsTerminal(status.Status) {
-		finalStatus, err := pollOptimizeJob(cmd, client, flags.pollInterval, operationID)
+		finalStatus, err = pollOptimizeJob(cmd, client, flags.pollInterval, operationID)
 		if err != nil {
 			return err
 		}
@@ -97,8 +133,8 @@ func runOptimizeStatus(cmd *cobra.Command, flags *optimizeStatusFlags, operation
 		printOptimizeResults(out, status, false)
 	}
 
-	if status.Error != nil {
-		return fmt.Errorf("optimization job failed: %s", status.Error.Message)
+	if finalStatus.Error != nil {
+		return fmt.Errorf("optimization job failed: %s", finalStatus.Error.Message)
 	}
 
 	return nil

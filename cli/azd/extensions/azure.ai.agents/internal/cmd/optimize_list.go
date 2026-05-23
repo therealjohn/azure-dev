@@ -13,6 +13,7 @@ import (
 
 	"azureaiagent/internal/pkg/agents/optimize_api"
 
+	azdext "github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -21,10 +22,12 @@ import (
 type optimizeListFlags struct {
 	limit  int    // maximum number of results
 	status string // filter by job status
+	output string // table or json
 	optimizeConnectionFlags
 }
 
-func newOptimizeListCommand() *cobra.Command {
+func newOptimizeListCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
+	extCtx = ensureExtensionContext(extCtx)
 	flags := &optimizeListFlags{}
 
 	cmd := &cobra.Command{
@@ -40,8 +43,15 @@ Use --status to filter by job status and --limit to control page size.`,
   azd ai agent optimize list --status completed
 
   # Show last 5 runs
-  azd ai agent optimize list --limit 5`,
+  azd ai agent optimize list --limit 5
+
+  # JSON for scripting / agents
+  azd ai agent optimize list --output json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			flags.output = extCtx.OutputFormat
+			if err := validateOutputFormat(flags.output); err != nil {
+				return err
+			}
 			return runOptimizeList(cmd, flags)
 		},
 	}
@@ -49,6 +59,7 @@ Use --status to filter by job status and --limit to control page size.`,
 	cmd.Flags().IntVar(&flags.limit, "limit", 20, "Maximum number of results")
 	cmd.Flags().StringVar(&flags.status, "status", "", "Filter by status (pending/running/completed/failed/cancelled)")
 	flags.optimizeConnectionFlags.register(cmd)
+	registerAgentOutputFlag(cmd)
 
 	return cmd
 }
@@ -81,6 +92,10 @@ func runOptimizeList(cmd *cobra.Command, flags *optimizeListFlags) error {
 
 	out := cmd.OutOrStdout()
 
+	if isJSONOutput(flags.output) {
+		return printOptimizeListJSON(out, listResp.Data, flags.status)
+	}
+
 	if len(listResp.Data) == 0 {
 		fmt.Fprintln(out, "  No optimization jobs found.")
 		if flags.status != "" {
@@ -92,6 +107,47 @@ func runOptimizeList(cmd *cobra.Command, flags *optimizeListFlags) error {
 
 	printOptimizeListTable(out, listResp.Data)
 	return nil
+}
+
+// optimizeListJSONItem is the per-job JSON shape for `azd ai agent optimize list --output json`.
+// Mirrors the table columns; `score` is omitted when no best candidate exists yet
+// so consumers can distinguish "0.0 score" from "no score available".
+type optimizeListJSONItem struct {
+	ID        string   `json:"id"`
+	Status    string   `json:"status"`
+	Agent     string   `json:"agent,omitempty"`
+	Score     *float64 `json:"score,omitempty"`
+	CreatedAt string   `json:"createdAt,omitempty"`
+}
+
+// optimizeListJSONResponse wraps items so the response is an object rather than
+// a bare array (extensible for future fields like pagination cursors).
+type optimizeListJSONResponse struct {
+	Items        []optimizeListJSONItem `json:"items"`
+	StatusFilter string                 `json:"statusFilter,omitempty"`
+}
+
+func printOptimizeListJSON(w io.Writer, jobs []optimize_api.OptimizeJobStatus, statusFilter string) error {
+	resp := optimizeListJSONResponse{
+		Items:        make([]optimizeListJSONItem, 0, len(jobs)),
+		StatusFilter: statusFilter,
+	}
+	for _, job := range jobs {
+		item := optimizeListJSONItem{
+			ID:        job.OperationID,
+			Status:    job.Status,
+			CreatedAt: job.CreatedAt,
+		}
+		if job.Agent != nil {
+			item.Agent = job.Agent.AgentName
+		}
+		if job.Best != nil {
+			score := job.Best.AvgScore
+			item.Score = &score
+		}
+		resp.Items = append(resp.Items, item)
+	}
+	return printJSON(w, resp)
 }
 
 func printOptimizeListTable(out io.Writer, jobs []optimize_api.OptimizeJobStatus) {
