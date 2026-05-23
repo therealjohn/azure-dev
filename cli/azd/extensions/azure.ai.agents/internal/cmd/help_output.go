@@ -8,10 +8,10 @@
 //      when the current workspace is incomplete -- quiet for fully-deployed
 //      projects so seasoned users see no noise.
 //
-//   2. An ENVIRONMENT VARIABLES section. Documents how azd loads env vars
+//   2. An Environments & Environment Variables section. Documents how azd loads env vars
 //      from .azure/<env>/.env and lists the agents-specific vars.
 //
-//   3. A DOCS & AGENT SKILLS section. Phase 1D points at commands that exist
+//   3. A Docs & Agent Skills section. Phase 1D points at commands that exist
 //      today (show, project show, doctor). Phase 2 will add `azd ai agent
 //      docs` references; Phase 3 will switch to `azd ai doc agent`.
 //
@@ -44,7 +44,10 @@ func installAgentsHelpOutput(rootCmd *cobra.Command) {
 		if cmd == rootCmd {
 			printBanner(w)
 			if preamble := resolveGetStartedPreamble(cmd.Context()); preamble != "" {
-				fmt.Fprintln(w, preamble)
+				// preamble already ends with "\n"; mirror the spacing used by
+				// the env-vars and docs sections below (Fprint + Fprintln)
+				// so there is exactly one blank line before the cobra body.
+				fmt.Fprint(w, preamble)
 				fmt.Fprintln(w)
 			}
 		}
@@ -211,13 +214,13 @@ func hasDeployedAgent(ctx context.Context, azdClient *azdext.AzdClient) bool {
 	return false
 }
 
-// environmentVariablesSection renders the ENVIRONMENT VARIABLES help block.
+// environmentVariablesSection renders the Environments & Environment Variables help block.
 // Documents the .azure/<env>/.env mechanism plus the agent-specific vars.
 // Lives on the root --help only so it stays terse on leaf-command help.
 func environmentVariablesSection() string {
 	var b strings.Builder
 	bold := color.New(color.Bold)
-	b.WriteString(bold.Sprint("ENVIRONMENT VARIABLES"))
+	b.WriteString(bold.Sprint("Environments & Environment Variables:"))
 	b.WriteString("\n  azd loads environment variables from `.azure/<env-name>/.env` in your\n")
 	b.WriteString("  project. Manage them with:\n\n")
 	b.WriteString("    azd env list                  List azd environments in this project.\n")
@@ -238,7 +241,7 @@ func environmentVariablesSection() string {
 	return b.String()
 }
 
-// docsAndAgentSkillsSection renders the DOCS & AGENT SKILLS help block.
+// docsAndAgentSkillsSection renders the Docs & Agent Skills help block.
 // The agent-friendly workflow docs are owned by the azure.ai.docs extension
 // (a separate front-door extension) and reached via `azd ai doc agent`.
 // This section also points at the in-binary read paths that exist today
@@ -247,7 +250,7 @@ func environmentVariablesSection() string {
 func docsAndAgentSkillsSection() string {
 	var b strings.Builder
 	bold := color.New(color.Bold)
-	b.WriteString(bold.Sprint("DOCS & AGENT SKILLS"))
+	b.WriteString(bold.Sprint("Docs & Agent Skills:"))
 	b.WriteString("\n  Inspect state, identity, and health from the terminal:\n\n")
 	b.WriteString("    azd ai agent show --output json                Inspect the deployed agent record (JSON).\n")
 	b.WriteString("    azd ai agent project show --output json        Inspect identity, subscription, and project context.\n")

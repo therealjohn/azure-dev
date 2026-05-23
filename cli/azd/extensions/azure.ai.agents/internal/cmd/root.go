@@ -39,7 +39,7 @@ func NewRootCommand() *cobra.Command {
 	}
 
 	// Show the ASCII art banner + state-aware "Get started" preamble +
-	// ENVIRONMENT VARIABLES + DOCS & AGENT SKILLS on `azd ai agent --help`.
+	// Environments & Environment Variables + Docs & Agent Skills on `azd ai agent --help`.
 	// installAgentsHelpOutput wraps the default cobra help func so subcommand
 	// --help output is unaffected.
 	installAgentsHelpOutput(rootCmd)
