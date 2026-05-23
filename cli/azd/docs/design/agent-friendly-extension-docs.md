@@ -3,10 +3,18 @@
 ## Status
 
 **Adopted** -- `azure.ai.docs` is the canonical front door for agent-friendly
-documentation across every `azure.ai.*` extension as of `agent-ready` branch
-(commits `2926d5d23`, `7b60c685b`). The first sibling onboarded is
-`azure.ai.agents` with four topics (`initialize`, `configure`, `investigate`,
-`operate`).
+documentation across every `azure.ai.*` extension as of `agent-ready` branch.
+
+Two surfaces are now in scope:
+
+| Surface | Audience | Lives in | First implementation |
+|---|---|---|---|
+| **Read-only topics** (`azd ai doc <category> <topic>`) | An AI assistant fetching just-in-time docs while it works | `azure.ai.docs/internal/cmd/skills/<category>/<topic>.md` | `agent` category, four topics (`initialize`, `configure`, `investigate`, `operate`). Commits `2926d5d23`, `7b60c685b`. |
+| **Installable skill packs** (`azd ai doc skills install --target <tool>`) plus the **agent-driven onboarding pre-flow** (`azd ai agent init` opening prompts) | A developer who wants their coding agent to drive setup from inside their own editor | `azure.ai.docs/internal/cmd/skill_packs/<pack>/` and `azure.ai.agents/internal/cmd/init_preflow.go` + `starter_prompts/` | `azd-ai-skill` pack + `azd ai agent init` pre-flow. Commits `0841bd3a5`, `99f46dc22`, `1021a3f05`, `a29867cae`, `a2637a8be`, `4d2b0b00f`. |
+
+Both surfaces ship from `azure.ai.docs`; the pre-flow lives in the sibling
+extension that triggers it but dispatches into `azure.ai.docs` for the
+actual install.
 
 ## Goal
 
@@ -14,6 +22,14 @@ Give an AI coding assistant a single, low-friction entry point to learn how
 to drive any `azure.ai.*` extension on behalf of a developer, without
 relying on training data, web fetches, or guesswork. The agent runs one
 command, reads one slice of markdown, and is ready to act.
+
+A second goal added in the Phase 7 work: when a developer would rather have
+their coding agent drive the *whole* setup (not just answer ad-hoc
+questions), `azd ai agent init` opens with a three-question pre-flow that
+installs the right skill pack for their tool, hands them a starter prompt
+to paste, and gets out of the way. The developer's agent then drives
+`azd init` / `provision` / `deploy` etc. by reading the installed
+`SKILL.md`.
 
 ## Background
 
@@ -271,6 +287,329 @@ A topic that documents flags the CLI doesn't actually support is worse
 than no topic. See `cli/azd/extensions/azure.ai.agents/AGENTS.md` for
 the agents-extension implementation of these prerequisites.
 
+## Installable skill packs
+
+A **skill pack** is a directory of markdown the developer installs into
+their own project at a tool-specific path. Coding agents that support a
+native "skills" mechanism (Claude Code, Codex, Gemini CLI, GitHub Copilot,
+Opencode) auto-load anything under their conventional skills directory,
+which means once a pack is installed the developer's agent reads it on
+every turn without the user prompting.
+
+Skill packs are **different from `azd ai doc` topics**:
+
+| | `azd ai doc <category> <topic>` topics | Installable skill packs |
+|---|---|---|
+| Lives | Embedded in `azure.ai.docs` binary | Copied into the developer's project repo |
+| Read by | An agent that runs `azd ai doc ...` on demand | An agent that auto-loads its skills directory on every turn |
+| Activation | Explicit (agent runs the command) | Implicit (the agent's native skill mechanism) |
+| Update path | Re-install the docs extension | Re-run `azd ai doc skills install --force` |
+| Content style | Per-task reference (5-8 KB per topic) | Single condensed end-to-end walkthrough |
+
+Both surfaces coexist. Skill packs are how a developer delegates the
+whole setup; topics are how an agent fetches narrow reference docs while
+working.
+
+### Command surface
+
+```
+azd ai doc skills                           # `skills` subcommand parent (lists verbs)
+azd ai doc skills install --target <tool> [--path <dir>] [--force] [--no-prompt] [--output text|json]
+```
+
+Built-in targets (the shared `.agents/skills/<pack>/` path is the
+emerging cross-tool convention; Claude Code uses its own dotfolder):
+
+| `--target` | Install path (relative to cwd) |
+|---|---|
+| `claude` | `.claude/skills/azd-ai-skill/` |
+| `codex` | `.agents/skills/azd-ai-skill/` |
+| `gemini` | `.agents/skills/azd-ai-skill/` |
+| `copilot` | `.agents/skills/azd-ai-skill/` |
+| `opencode` | `.agents/skills/azd-ai-skill/` |
+| `custom` | User-supplied via `--path` |
+
+JSON success shape (`--output json`):
+
+```json
+{
+  "status": "installed",
+  "target": "copilot",
+  "path": ".agents/skills/azd-ai-skill",
+  "files": ["SKILL.md"]
+}
+```
+
+### Filesystem layout
+
+```
+cli/azd/extensions/azure.ai.docs/internal/cmd/
+  skill_install.go                # SkillInstallAction + RunE dispatch
+  skill_install_test.go
+  skills.go                       # `skills` subcommand parent
+  skill_packs/
+    azd-ai-skill/
+      SKILL.md
+      ... (optional supporting files)
+    <future-pack>/
+      SKILL.md
+```
+
+`//go:embed all:skill_packs` in `skill_install.go` pulls in every pack at
+build time -- adding a pack is mechanical.
+
+### Safety contract
+
+The install is **file-ownership safe** -- only files that ship in the
+embedded pack are ever touched on disk. Foreign files in the destination
+directory (user edits, files from another skill, the developer's notes)
+are never modified or removed.
+
+Concrete rules implemented by `SkillInstallAction.Run`:
+
+- Without `--force`: refuse the install when any owned file already
+  exists at the destination with content that differs from the bundled
+  version. Idempotent when content matches byte-for-byte.
+- With `--force`: overwrite only files in the pack manifest. Leave
+  unknown files untouched.
+- Refuse when an owned-file path is occupied by a directory or symlink;
+  surface a clear "remove it manually" hint.
+- Atomic writes (write to `.tmp` + rename) so a half-write does not
+  leave the destination in a torn state.
+
+### Custom-path validation
+
+`--target custom` requires `--path <dir>`, and `<dir>` is validated
+before any disk access:
+
+- Empty, `.`, `..` rejected.
+- Absolute paths (POSIX or Windows drive-qualified) rejected.
+- Leading `/` or `\` rejected (catches forward-slash absolute paths on
+  every OS).
+- `filepath.Abs(filepath.Join(cwd, path))` must resolve under cwd
+  (defeats `../escape`).
+- If any existing parent is a symlink, `EvalSymlinks` must still resolve
+  inside cwd (defeats symlink escape).
+
+The same containment check is applied per-file during extraction, as
+defense in depth against future pack edits.
+
+### Action-object pattern
+
+`SkillInstallAction` follows the action-object pattern enforced across
+the `azure.ai.*` extensions: cobra `RunE` validates flags, constructs
+the action, and calls `action.Run(ctx)`. No business logic lives in
+RunE. See the existing `SampleListAction` / `ShowAction` / etc. in
+`azure.ai.agents/internal/cmd/` for the same pattern, and trangevi's
+review comment on PR #8266 (commit `discussion_r3276590928`) for the
+rationale.
+
+## Agent-driven onboarding pre-flow
+
+A sibling extension's `init` command can opt in to a **pre-flow** that
+asks the developer whether to delegate the whole setup to their coding
+agent. The pre-flow installs the right skill pack, copies a tailored
+starter prompt to the clipboard, and exits without running the existing
+interactive init.
+
+Reference implementation: `azure.ai.agents/internal/cmd/init_preflow.go`
++ `init.go` integration + `starter_prompts/agent_init.md`.
+
+### The three-question pattern
+
+The pre-flow runs only when `!flags.noPrompt`. The shape is intentionally
+the same for every sibling that adopts it so users build muscle memory:
+
+```
+Q1 [Confirm]  "Do you want your coding agent to set up and create an
+              <thing> in <product>?"
+              default No (existing flow is the path of least surprise)
+                -> No  : return (handled=false) -> existing init runs
+                -> Yes : continue
+
+Q2 [Confirm]  "Install the <pack-name> skill for your coding agent?"
+              default Yes
+                -> Yes : Q3
+                -> No  : skip to starter prompt
+
+Q3 [Select]   "Which coding agent are you using?"
+              6 choices: claude / codex / gemini / copilot / opencode / custom
+              custom -> [Prompt] "Custom install path (relative to cwd):"
+
+Install      Shell out: `azd ai doc skills install --target <X> --no-prompt --output json`
+             (or `--path <Y>` for custom). Parse the JSON receipt for the
+             final install path. On extension-missing: pre-check via
+             `azd ext list -o json` and offer to install azure.ai.docs on
+             explicit consent (see "Why pre-check" below).
+
+Starter      Render the embedded starter-prompt template (text/template
+prompt       syntax with ProjectPath + SkillPath vars), print it verbatim
+             with a bold-yellow header, then offer clipboard copy.
+
+Clipboard    Pre-detect headless environments (CI=true, TERM=dumb, SSH
+             session, Linux with no DISPLAY/WAYLAND_DISPLAY) and SKIP
+             the Copy prompt entirely in those cases. Otherwise prompt
+             and soft-fail on library errors.
+
+Ready-to-go  Bold yellow "You're ready to go!" header + tool-specific
+             paste instruction ("Open GitHub Copilot Chat and paste the
+             prompt.") + manual-fallback commands + docs link.
+
+Return       (handled=true) -- caller MUST skip the existing init flow.
+```
+
+### Run signature
+
+The action's `Run(ctx)` returns `(handled bool, err error)`. The cobra
+RunE pattern:
+
+```go
+if !flags.noPrompt {
+    preflow := &InitPreflowAction{
+        out:       cmd.OutOrStdout(),
+        azdClient: azdClient,
+        runner:    defaultAzdRunner,
+        cwd:       cwd,
+        copyClip:  CopyToClipboard,
+    }
+    handled, err := preflow.Run(ctx)
+    if err != nil {
+        return err
+    }
+    if handled {
+        return nil // skip the existing InitAction
+    }
+}
+// existing init flow runs unchanged
+```
+
+`handled == false` means the user declined Q1; the caller proceeds with
+the existing interactive init. `handled == true` means the pre-flow
+already showed the user what to do next and the caller MUST NOT also
+show its own UX. The boolean is a contract -- never re-enter the
+existing flow when `handled == true`.
+
+### Starter prompts live in the sibling extension
+
+Per-extension ownership pattern: the starter-prompt template lives in
+the extension that owns the workflow, NOT in `azure.ai.docs`. The agents
+extension keeps:
+
+```
+azure.ai.agents/internal/cmd/
+  starter_prompts/
+    agent_init.md          # text/template with .ProjectPath, .SkillPath
+  starter_prompt.go        # renderStarterPrompt + CopyToClipboard helpers
+```
+
+Other ai.* extensions adopting the pre-flow drop their own templates
+under their own `starter_prompts/` dir. Rationale:
+
+- Starter prompts are tightly coupled to the sibling extension's actual
+  workflow; coupling them to `azure.ai.docs`'s release cadence would
+  slow iteration.
+- Templates are typically small (~1 KB) so duplication is cheap.
+- Per-extension ownership keeps the cross-extension contract narrow:
+  `azure.ai.docs` owns *installable* content; each sibling owns its
+  *invocation-time* content.
+
+### Why pre-check instead of relying on azd auto-install
+
+`azd` ships an auto-install path (`cli/azd/cmd/auto_install.go`) that
+detects when a command belongs to an uninstalled extension and offers
+to install it. With `--no-prompt` the auto-install proceeds silently
+because `console.Confirm` returns the prompt's `DefaultValue` (`true`).
+
+**It does not work for our case.** The pre-parser
+(`extractFlagsWithValues`) only knows flags declared on the current
+command tree. Extension-specific flags like `--target` and `--path` do
+not exist until `azure.ai.docs` is installed, so the pre-parser treats
+`copilot` (a `--target` value) and `json` (an `--output` value) as
+positional args, mis-detects the command, and the re-run fails with
+`unknown flag: --target` even though the extension was just installed
+successfully.
+
+The pre-flow therefore pre-checks via `lookupExtension` (parses
+`azd ext list -o json`) and explicitly dispatches
+`azd ext install azure.ai.docs` on user consent before ever attempting
+the skill install. See the long-form comment at the top of
+`azure.ai.agents/internal/cmd/ext_lookup.go` and commit `f6c38d28b`
+for the empirical reproduction.
+
+### Banner suppression
+
+The decorative ASCII banner that `azd ai agent init` prints is
+suppressed in two cases:
+
+- `--no-prompt` mode (CI/automated runs) -- banner noise in
+  machine-parsed logs.
+- (Future) when Q1=Yes -- the user is delegating to their coding agent
+  and never sees the banner anyway.
+
+The current `init.go` suppresses on `--no-prompt`; the Q1=Yes
+suppression is a small follow-up that was deferred so the pre-flow's
+own output style stays consistent during initial rollout.
+
+### Targets table is shared but duplicated
+
+Both `azure.ai.docs/internal/cmd/skill_install.go` and
+`azure.ai.agents/internal/cmd/init_preflow.go` maintain their own
+copy of the target table:
+
+- The docs-side table drives `--target` validation and the install
+  path lookup.
+- The agents-side table drives Q3's Select choice list, the
+  gray-colored path labels, and the per-tool paste instructions in
+  the ready-to-go block.
+
+The duplication is intentional -- the agents extension needs richer
+metadata (`pasteInstruction`, gray-formatted label) that the docs
+extension does not. Tests in each extension pin its own table; the
+drift guard is `TestPreflowTargets_PathsAlignWithDocsExtension` in
+the agents extension, which fails loudly if the path arrangement
+diverges.
+
+**Reverse-lookup hazard**: codex / gemini / copilot / opencode all
+install to the same path (`.agents/skills/azd-ai-skill/`). Code that
+reverse-resolves the chosen target by `installPath` would always
+match the first entry (codex) regardless of what the user picked. The
+pre-flow MUST track the chosen target directly from Q3 -- see
+`TestPrintReadyToGo_UsesPasteInstructionFromChosenTarget` (commit
+`a2637a8be` fixed an instance of this bug).
+
+## Adding the onboarding pre-flow to a new sibling extension
+
+Three mechanical steps once the sibling already has an interactive init
+command and the docs extension already ships a relevant skill pack:
+
+1. **Author the starter-prompt template.** Drop
+   `internal/cmd/starter_prompts/<name>.md` into the sibling extension.
+   Use `text/template` syntax for any per-project substitutions
+   (`ProjectPath`, `SkillPath`, etc.). Keep it under ~2 KB.
+2. **Add the per-extension targets table + action.** Copy
+   `init_preflow.go` from `azure.ai.agents` as a starting point.
+   Adjust:
+   - `preflowTargets` (mostly the same; just verify paths match the
+     skill pack's install paths in `azure.ai.docs`).
+   - `askDelegate` Q1 message ("set up a `<thing>` in `<product>`?").
+   - `askInstallSkill` Q2 message (skill pack display name).
+   - The dispatch args in `installSkill` (`--target X`).
+   - The ready-to-go block's "what your agent will do" paragraph.
+3. **Wire the dispatch in the sibling's `init` RunE.** After flag
+   resolution + `azdClient` construction, before the existing init
+   logic:
+   ```go
+   if !flags.noPrompt {
+       preflow := &InitPreflowAction{...}
+       handled, err := preflow.Run(ctx)
+       if err != nil { return err }
+       if handled { return nil }
+   }
+   ```
+
+That is the entire onboarding. No coordination with `azure.ai.docs` is
+required beyond confirming the skill pack name + install paths match.
+
 ## Local development
 
 ```bash
@@ -312,6 +651,27 @@ needs the full sequence.
   optimizes for an agent reader, not a human one. A human-facing docs
   site can reference the topic source files but should not auto-publish
   them.
+- **No reliance on `azd` auto-install for the skill install dispatch.**
+  Auto-install does run when shelling out programmatically, but mis-
+  parses extension-specific flag values (`--target`, `--path`) and the
+  re-run after install fails with `unknown flag: --target`. The pre-flow
+  pre-checks via `azd ext list -o json` and explicitly installs
+  `azure.ai.docs` on user consent. See `ext_lookup.go` for the long-form
+  comment and commit `f6c38d28b` for the empirical reproduction.
+- **No `azd ai doc skills list / uninstall / update`.** Reserved for
+  future verbs under the same subtree but explicitly not in scope for
+  the initial rollout. Re-running `install --force` covers update; an
+  uninstall would need to track an owned-files manifest on disk, which
+  we deliberately did not ship to keep `--force` safe.
+- **No `azd ai agent init --install-skill <target>` flag.** The
+  non-interactive equivalent is `azd ai doc skills install --target X
+  --no-prompt`. Add the init flag only if automation users actually
+  ask for one-shot init+install.
+- **No auto-install of `azure.ai.docs` from inside the pre-flow without
+  user consent.** Detected absence triggers an explicit Confirm prompt.
+- **Starter prompts do NOT live in `azure.ai.docs`.** They are
+  per-extension content (see "Starter prompts live in the sibling
+  extension" above). This is deliberate; do not move them.
 
 ## References
 
@@ -319,7 +679,16 @@ needs the full sequence.
 - First onboarded sibling: `cli/azd/extensions/azure.ai.agents/`
 - Confirmation envelope contract: agents `README.md` (Confirmation
   envelope for write commands section)
+- Action-object pattern rationale: trangevi review on PR #8266
+  (`https://github.com/Azure/azure-dev/pull/8266#discussion_r3276590928`)
 - Implementation commits on `agent-ready` branch:
   - `2926d5d23` -- initial `azure.ai.docs` extension scaffolding
-  - `7b60c685b` -- moved content from agents into the docs extension
+  - `7b60c685b` -- moved topic content from agents into the docs extension
   - `b28ae56fd` -- reserved-flag fix (use SDK `RegisterFlagOptions`)
+  - `0841bd3a5` -- `azd ai doc skills install` command + `azd-ai-skill` pack
+  - `99f46dc22` -- embedded starter prompt + clipboard helper (atotto dep)
+  - `1021a3f05` -- cross-extension lookup + dispatch helpers
+  - `a29867cae` -- agent-driven onboarding pre-flow on `azd ai agent init`
+  - `f6c38d28b` -- documented why we pre-check the docs extension
+  - `a2637a8be` -- fixed reverse-lookup bug; track chosen target directly
+  - `4d2b0b00f` -- renamed Microsoft Foundry skill to AZD AI skill
