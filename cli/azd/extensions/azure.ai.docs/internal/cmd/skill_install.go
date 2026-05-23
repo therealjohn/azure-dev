@@ -32,15 +32,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// skillPacksFS holds every embedded skill pack shipped by this extension.
-// Each pack lives at skill_packs/<pack-name>/. Add a pack by creating a
-// new subdirectory with a SKILL.md (and any supporting files).
+// skillFilesFS holds the skill files shipped by this extension. The
+// install command writes these into a tool-specific destination
+// directory in the user's project. Add a new bundled file by extending
+// the embed directive below (e.g. `skills/SKILL.md skills/helpers`).
 //
-//go:embed all:skill_packs
-var skillPacksFS embed.FS
+// Note: this FS deliberately does NOT embed the topic-doc subdirs
+// (skills/<category>/*.md) used by doc_agent.go -- those live in a
+// separate embed.FS so the install surface stays a flat, well-known set
+// of files.
+//
+//go:embed skills/SKILL.md
+var skillFilesFS embed.FS
 
-// defaultPackName is the only pack shipped today. When additional packs
-// are added, this becomes a --pack flag with this string as its default.
+// skillsRootDir is the in-FS directory the embedded skill files live
+// under. Used as the WalkDir root and stripped from each file's
+// relative path when copying to the install destination.
+const skillsRootDir = "skills"
+
+// defaultPackName is the destination directory name written into the
+// user's project (e.g. .claude/skills/azd-ai-skill/). It is NOT a
+// source-side folder anymore -- the bundled files live directly under
+// skills/. When additional install bundles are added, this becomes a
+// --pack flag with this string as its default.
 const defaultPackName = "azd-ai-skill"
 
 // targetSpec maps a --target value to a display name and an install path
@@ -85,12 +99,13 @@ type SkillInstallAction struct {
 	// under. Injected for testability so unit tests can drive the
 	// action without t.Chdir-ing the whole test binary.
 	cwd string
-	// packs is the embedded skill-pack filesystem. Injected so a future
+	// packs is the embedded skill-file filesystem. Injected so a future
 	// test can swap in a tmpfs/iotest.MapFS without going through
 	// //go:embed reload.
 	packs fs.FS
-	// packName selects which pack under skill_packs/ to install. Today
-	// always defaultPackName; reserved for a future --pack flag.
+	// packName is the destination directory name written into the
+	// user's project. Reserved for a future --pack flag; today always
+	// defaultPackName.
 	packName string
 }
 
@@ -163,7 +178,7 @@ Safety:
 				flags:    flags,
 				out:      cmd.OutOrStdout(),
 				cwd:      cwd,
-				packs:    skillPacksFS,
+				packs:    skillFilesFS,
 				packName: defaultPackName,
 			}
 
@@ -339,7 +354,8 @@ func lookupTarget(name string) (targetSpec, bool) {
 // Run executes the install. The flow:
 //
 //  1. Resolve destination dir from --target (or --path for custom).
-//  2. Enumerate the embedded pack -> list of (relPath, content) pairs.
+//  2. Enumerate the embedded skill files -> list of (relPath, content)
+//     pairs.
 //  3. For each owned file: compare to destination. Conflicts gated by
 //     --force.
 //  4. Create destination dir(s) and write owned files.
@@ -353,12 +369,12 @@ func (a *SkillInstallAction) Run(ctx context.Context) error {
 	}
 	destAbs := filepath.Join(a.cwd, destRel)
 
-	files, err := readPack(a.packs, a.packName)
+	files, err := readPack(a.packs)
 	if err != nil {
 		return err
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("skill pack %q has no files (extension build is missing embedded content)", a.packName)
+		return fmt.Errorf("skill files for %q are missing (extension build is missing embedded content)", a.packName)
 	}
 
 	// Conflict check: refuse without --force if any owned file already
@@ -394,20 +410,19 @@ func (a *SkillInstallAction) Run(ctx context.Context) error {
 	return a.renderResult(destRel, written)
 }
 
-// packFile is one file from an embedded skill pack.
+// packFile is one file from the embedded skill set.
 type packFile struct {
-	relPath string // forward-slash path under the pack root (e.g. "SKILL.md")
+	relPath string // forward-slash path under skills/ (e.g. "SKILL.md")
 	content []byte
 }
 
-// readPack walks the embedded filesystem for a pack and returns every
-// regular file's relative path + content. Skips directories. Returns an
-// error when the pack root does not exist.
-func readPack(packs fs.FS, packName string) ([]packFile, error) {
-	root := "skill_packs/" + packName
+// readPack walks the embedded filesystem for skill files and returns
+// every regular file's relative path + content. Skips directories.
+// Returns an error when the skills root does not exist.
+func readPack(packs fs.FS) ([]packFile, error) {
 	var files []packFile
 
-	err := fs.WalkDir(packs, root, func(path string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(packs, skillsRootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -418,12 +433,12 @@ func readPack(packs fs.FS, packName string) ([]packFile, error) {
 		if err != nil {
 			return fmt.Errorf("read embedded %s: %w", path, err)
 		}
-		rel := strings.TrimPrefix(path, root+"/")
+		rel := strings.TrimPrefix(path, skillsRootDir+"/")
 		files = append(files, packFile{relPath: rel, content: body})
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("read skill pack %q: %w", packName, err)
+		return nil, fmt.Errorf("read skill files: %w", err)
 	}
 
 	sort.Slice(files, func(i, j int) bool {

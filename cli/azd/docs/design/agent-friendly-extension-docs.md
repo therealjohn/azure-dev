@@ -10,7 +10,7 @@ Two surfaces are now in scope:
 | Surface | Audience | Lives in | First implementation |
 |---|---|---|---|
 | **Read-only topics** (`azd ai doc <category> <topic>`) | An AI assistant fetching just-in-time docs while it works | `azure.ai.docs/internal/cmd/skills/<category>/<topic>.md` | `agent` category, four topics (`initialize`, `configure`, `investigate`, `operate`). Commits `2926d5d23`, `7b60c685b`. |
-| **Installable skill packs** (`azd ai doc skills install --target <tool>`) plus the **agent-driven onboarding pre-flow** (`azd ai agent init` opening prompts) | A developer who wants their coding agent to drive setup from inside their own editor | `azure.ai.docs/internal/cmd/skill_packs/<pack>/` and `azure.ai.agents/internal/cmd/init_preflow.go` + `starter_prompts/` | `azd-ai-skill` pack + `azd ai agent init` pre-flow. Commits `0841bd3a5`, `99f46dc22`, `1021a3f05`, `a29867cae`, `a2637a8be`, `4d2b0b00f`. |
+| **Installable skill packs** (`azd ai doc skills install --target <tool>`) plus the **agent-driven onboarding pre-flow** (`azd ai agent init` opening prompts) | A developer who wants their coding agent to drive setup from inside their own editor | `azure.ai.docs/internal/cmd/skills/SKILL.md` and `azure.ai.agents/internal/cmd/init_preflow.go` + `starter_prompts/` | `azd-ai-skill` pack + `azd ai agent init` pre-flow. Commits `0841bd3a5`, `99f46dc22`, `1021a3f05`, `a29867cae`, `a2637a8be`, `4d2b0b00f`. |
 
 Both surfaces ship from `azure.ai.docs`; the pre-flow lives in the sibling
 extension that triggers it but dispatches into `azure.ai.docs` for the
@@ -347,16 +347,19 @@ cli/azd/extensions/azure.ai.docs/internal/cmd/
   skill_install.go                # SkillInstallAction + RunE dispatch
   skill_install_test.go
   skills.go                       # `skills` subcommand parent
-  skill_packs/
-    azd-ai-skill/
-      SKILL.md
-      ... (optional supporting files)
-    <future-pack>/
-      SKILL.md
+  skills/
+    SKILL.md                      # the bundled skill installed by `skills install`
+    ... (optional supporting files at this root)
+    <category>/                   # read-only topic docs (separate surface)
+      <topic>.md
 ```
 
-`//go:embed all:skill_packs` in `skill_install.go` pulls in every pack at
-build time -- adding a pack is mechanical.
+`//go:embed skills/SKILL.md` in `skill_install.go` pulls the bundled
+skill in at build time. Add another shipped file by extending the embed
+directive (e.g. `//go:embed skills/SKILL.md skills/helpers`); the
+read-only topic subdirectories under `skills/<category>/` are owned by a
+separate `embed.FS` in `doc_agent.go` and are not part of the install
+surface.
 
 ### Safety contract
 

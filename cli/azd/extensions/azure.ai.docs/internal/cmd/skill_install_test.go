@@ -291,10 +291,11 @@ func TestSkillInstallAction_JSONOutputShape(t *testing.T) {
 }
 
 // TestEmbeddedPackHasSKILLMd is a smoke test that the build-time embed
-// directive actually pulled in our pack. If this fails, //go:embed in
-// skill_install.go is broken or the directory layout drifted.
+// directive actually pulled in our skill files. If this fails,
+// //go:embed in skill_install.go is broken or the directory layout
+// drifted.
 func TestEmbeddedPackHasSKILLMd(t *testing.T) {
-	files, err := readPack(skillPacksFS, defaultPackName)
+	files, err := readPack(skillFilesFS)
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 
@@ -305,16 +306,16 @@ func TestEmbeddedPackHasSKILLMd(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, hasSkill, "embedded pack should include SKILL.md, got: %v", relPaths(files))
+	assert.True(t, hasSkill, "embedded skills should include SKILL.md, got: %v", relPaths(files))
 }
 
 // newTestPack returns an fs.FS shaped like the real embedded layout
-// (skill_packs/<pack>/<files>) so tests can drive Run() without
-// rebuilding the embed.
+// (skills/<files>) so tests can drive Run() without rebuilding the
+// embed.
 func newTestPack(files map[string]string) fs.FS {
 	mfs := fstest.MapFS{}
 	for rel, body := range files {
-		mfs["skill_packs/"+defaultPackName+"/"+rel] = &fstest.MapFile{Data: []byte(body)}
+		mfs["skills/"+rel] = &fstest.MapFile{Data: []byte(body)}
 	}
 	return mfs
 }
