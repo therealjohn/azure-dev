@@ -23,6 +23,7 @@ import (
 
 	"azureaiagent/internal/exterrors"
 
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/spf13/cobra"
 )
 
@@ -35,13 +36,23 @@ var skillsFS embed.FS
 
 const skillsDir = "docs/skills"
 
+// Output format values accepted by `azd ai agent docs --output`. Distinct
+// from the canonical OutputFormatTable/OutputFormatJSON used by data-returning
+// leaves because the docs default is "md" (the topic body verbatim), not a
+// human table. Wire-stable: change with care.
+const (
+	docsOutputMarkdown = "md"
+	docsOutputJSON     = "json"
+)
+
 // docsFlags carries the Cobra-bound flag values for `azd ai agent docs`.
 type docsFlags struct {
 	topic  string
 	output string
 }
 
-func newDocsCommand() *cobra.Command {
+func newDocsCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
+	extCtx = ensureExtensionContext(extCtx)
 	flags := &docsFlags{}
 
 	cmd := &cobra.Command{
@@ -66,7 +77,8 @@ topic. Humans should reach for --help or the online docs.`,
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := validateOutputFormat(flags.output); err != nil {
+			flags.output = extCtx.OutputFormat
+			if err := validateDocsOutputFormat(flags.output); err != nil {
 				return err
 			}
 			return runDocs(flags)
@@ -76,8 +88,16 @@ topic. Humans should reach for --help or the online docs.`,
 	cmd.Flags().StringVar(&flags.topic, "topic", "",
 		"Topic to print. Omit to list available topics. "+
 			"Valid: initialize, configure, investigate, operate.")
-	cmd.Flags().StringVar(&flags.output, "output", "md",
-		"Output format: md (default), json.")
+
+	// --output is the azd reserved global; we register the docs-specific
+	// allowed values (md/json) via the SDK hook so the host accepts the
+	// flag and substitutes the default before RunE rather than rejecting
+	// the command as defining a conflicting flag.
+	azdext.RegisterFlagOptions(cmd, azdext.FlagOptions{
+		Name:          "output",
+		AllowedValues: []string{docsOutputMarkdown, docsOutputJSON},
+		Default:       docsOutputMarkdown,
+	})
 
 	return cmd
 }
@@ -94,6 +114,28 @@ type docsTopicResponse struct {
 // when no --topic is set. Stable contract -- additive changes only.
 type docsListResponse struct {
 	Topics []string `json:"topics"`
+}
+
+// validateDocsOutputFormat rejects values other than md/json. The SDK
+// pre-parse sentinel "default" and empty string both resolve to md (the
+// docs-command default registered with RegisterFlagOptions).
+func validateDocsOutputFormat(out string) error {
+	switch strings.ToLower(strings.TrimSpace(out)) {
+	case "", "default", docsOutputMarkdown, docsOutputJSON:
+		return nil
+	default:
+		return exterrors.Validation(
+			exterrors.CodeInvalidParameter,
+			fmt.Sprintf("invalid --output value %q", out),
+			"use md or json",
+		)
+	}
+}
+
+// isDocsJSON reports whether the resolved --output value selects the JSON
+// envelope shape. Empty / "default" / "md" all return false.
+func isDocsJSON(out string) bool {
+	return strings.EqualFold(strings.TrimSpace(out), docsOutputJSON)
 }
 
 func runDocs(flags *docsFlags) error {
@@ -132,7 +174,7 @@ func listTopics(w io.Writer, output string) error {
 	}
 	sort.Strings(names)
 
-	if isJSONOutput(output) {
+	if isDocsJSON(output) {
 		return printJSON(w, docsListResponse{Topics: names})
 	}
 
@@ -167,7 +209,7 @@ func printTopic(w io.Writer, topic, output string) error {
 		)
 	}
 
-	if isJSONOutput(output) {
+	if isDocsJSON(output) {
 		return printJSON(w, docsTopicResponse{Topic: topic, Body: string(body)})
 	}
 
