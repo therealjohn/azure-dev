@@ -26,6 +26,27 @@ Each topic is a contract an agent reads to drive the matching CLI
 commands: exact invocations, JSON shape examples, error codes,
 confirmation-envelope handling.
 
+## Local development
+
+The first install in a new environment needs the full pack + publish +
+install flow because `azd x build` alone only deploys the binary to
+`~/.azd/extensions/<id>/` -- not the `extension.yaml` manifest. Without
+the manifest azd can't register the command surface, so `azd ai doc`
+will not appear under `azd ai`.
+
+```bash
+cd cli/azd/extensions/azure.ai.docs
+
+# First time only
+azd x build
+azd x pack
+azd x publish
+azd ext install azure.ai.docs
+
+# After that, iterate with watch (rebuilds + redeploys binary)
+azd x watch
+```
+
 ## Adding topics for another ai.* extension
 
 The repo layout is intentionally simple:
