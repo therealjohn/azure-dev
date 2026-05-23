@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,27 +130,4 @@ func TestRunChildAzd_PassesArgsVerbatim(t *testing.T) {
 	require.NoError(t, runChildAzd(context.Background(), runner, args, io.Discard, io.Discard))
 	require.Len(t, runner.runCalls, 1)
 	assert.Equal(t, args, runner.runCalls[0].args)
-}
-
-func TestChildAzdMissingError_DetectsUnknownCommand(t *testing.T) {
-	// Build a fake exec.ExitError with stderr that matches the cobra
-	// "unknown command" output -- this is what we see when the user
-	// runs `azd ai doc ...` without the docs extension installed.
-	ee := &exec.ExitError{Stderr: []byte(`Error: unknown command "doc" for "ai"`)}
-	assert.True(t, childAzdMissingError(ee))
-}
-
-func TestChildAzdMissingError_DetectsUnknownFlag(t *testing.T) {
-	ee := &exec.ExitError{Stderr: []byte("Error: unknown flag --target")}
-	assert.True(t, childAzdMissingError(ee))
-}
-
-func TestChildAzdMissingError_FalseOnUnrelatedError(t *testing.T) {
-	ee := &exec.ExitError{Stderr: []byte("Error: insufficient quota")}
-	assert.False(t, childAzdMissingError(ee))
-}
-
-func TestChildAzdMissingError_FalseOnNonExitError(t *testing.T) {
-	assert.False(t, childAzdMissingError(nil))
-	assert.False(t, childAzdMissingError(errors.New("network down")))
 }

@@ -13,13 +13,39 @@
 // expose extension-management RPCs from inside an extension. Pattern
 // matches the existing exec.Command("azd", ...) sites in
 // microsoft.azd.extensions and microsoft.azd.concurx.
+//
+// # Why pre-check instead of relying on azd's built-in auto-install
+//
+// `azd` ships an auto-install feature (cli/azd/cmd/auto_install.go)
+// that detects when a command belongs to an uninstalled extension and
+// offers to install it. In `--no-prompt` mode `console.Confirm` returns
+// the prompt's DefaultValue (`true` for the auto-install prompt), so in
+// theory shelling out to `azd ai doc skills install --no-prompt` would
+// silently install azure.ai.docs and re-run the command.
+//
+// In practice the re-run breaks for our use case. The pre-parser
+// `extractFlagsWithValues` only knows about flags declared on the
+// CURRENT command tree -- extension-specific flags like `--target` and
+// `--path` do not exist until azure.ai.docs is installed. So the
+// pre-parser treats `copilot` (a `--target` value) and `json` (an
+// `--output` value) as positional args, mis-detects the command, and
+// the re-run fails with `unknown flag: --target` even though the
+// extension was just installed successfully.
+//
+// Pre-checking with `azd ext list -o json` + an explicit consent
+// prompt + an explicit `azd ext install` shell-out avoids this entirely
+// because we only dispatch the install command once azure.ai.docs is
+// known to be present. As a bonus the parent process owns the consent
+// UX (single clean prompt) instead of the child emitting a surprise
+// warning mid-flow, and CI users get one clear "install azure.ai.docs"
+// hint from us instead of the two scattered messages auto-install
+// produces.
 
 package cmd
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -125,25 +151,6 @@ func installExtension(ctx context.Context, runner azdRunner, id string, stdout, 
 // cross-extension calls in the future.
 func runChildAzd(ctx context.Context, runner azdRunner, args []string, stdout, stderr io.Writer) error {
 	return runner.Run(ctx, args, stdout, stderr)
-}
-
-// childAzdMissingError reports whether err looks like the azd child
-// failed because the target command/subcommand does not exist (the
-// extension was not installed, or its namespace is wrong). Used by the
-// pre-flow to convert opaque cobra "unknown command" errors into a
-// clear "install the docs extension" hint.
-func childAzdMissingError(err error) bool {
-	if err == nil {
-		return false
-	}
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
-		return false
-	}
-	stderr := strings.ToLower(string(ee.Stderr))
-	return strings.Contains(stderr, "unknown command") ||
-		strings.Contains(stderr, "unknown flag") ||
-		strings.Contains(stderr, "not found")
 }
 
 // defaultAzdRunner is the package-level production runner. Tests

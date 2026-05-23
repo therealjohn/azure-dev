@@ -323,11 +323,10 @@ func (a *InitPreflowAction) installSkill(ctx context.Context, target preflowTarg
 	// so any failure detail is visible to the user live.
 	var stdout strings.Builder
 	if err := a.runner.Run(ctx, args, &stdout, nil); err != nil {
-		if childAzdMissingError(err) {
-			return "", fmt.Errorf(
-				"the %s extension is required to install the skill. "+
-					"Run `azd ext install %s` and re-try", docsExtensionID, docsExtensionID)
-		}
+		// We pre-checked docs-extension presence in ensureDocsExtension
+		// above (see ext_lookup.go for the rationale on why we don't
+		// rely on azd's auto-install). Any error here is from the
+		// install command itself; wrap and re-raise.
 		return "", fmt.Errorf("run `azd ai doc skills install`: %w", err)
 	}
 
