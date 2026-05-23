@@ -239,13 +239,13 @@ func environmentVariablesSection() string {
 }
 
 // docsAndAgentSkillsSection renders the DOCS & AGENT SKILLS help block.
-// Phase 1D + Phase 2: lists the agent-friendly read paths (show / project
-// show / doctor) plus the embedded-docs entry points (`azd ai agent docs`).
-// Phase 3 will switch the entry points to `azd ai doc agent` once the
-// azure.ai.docs extension exists.
+// Phase 1D + Phase 2 + Phase 3: lists the agent-friendly read paths,
+// the in-binary `azd ai agent docs` topic surface, and the unified
+// front-door `azd ai doc agent` command from the azure.ai.docs extension.
 //
-// TODO(Phase 3): re-point this section at `azd ai doc agent` once the
-// azure.ai.docs extension is published.
+// When azure.ai.docs is not installed, `azd ai doc agent` will fail with
+// an install hint; that's intentional -- we want users to know the
+// preferred entry point even if they haven't installed the docs ext yet.
 func docsAndAgentSkillsSection() string {
 	var b strings.Builder
 	bold := color.New(color.Bold)
@@ -257,5 +257,9 @@ func docsAndAgentSkillsSection() string {
 	b.WriteString("\n  Agent-friendly workflow docs (markdown, embedded in this binary):\n\n")
 	b.WriteString("    azd ai agent docs                              List available skill topics.\n")
 	b.WriteString("    azd ai agent docs --topic <name>               Print one of: initialize, configure, investigate, operate.\n")
+	b.WriteString("\n  Unified front door across every azure.ai.* extension (requires azure.ai.docs):\n\n")
+	b.WriteString("    azd ai doc                                     List ai.* extensions with docs available.\n")
+	b.WriteString("    azd ai doc agent                               List skill topics for this extension.\n")
+	b.WriteString("    azd ai doc agent <topic>                       Print one topic via the docs front door.\n")
 	return b.String()
 }
