@@ -28,36 +28,61 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
-// installAgentsHelpOutput installs the agents-extension help func: banner +
-// state-aware preamble + default help body + env-vars + docs sections. Other
-// subcommands' --help is unaffected.
+// installAgentsHelpOutput installs the agents-extension help func. On the
+// root command we render a custom layout:
+//
+//	banner
+//	Short / Long description
+//	state-aware "Get started" preamble (when applicable)
+//	Usage / Aliases / Commands / Flags  (via cmd.UsageString)
+//	Environments & Environment Variables
+//	Docs & Agent Skills
+//
+// Subcommand --help is delegated unchanged to cobra's default HelpFunc.
 func installAgentsHelpOutput(rootCmd *cobra.Command) {
 	defaultHelp := rootCmd.HelpFunc()
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		w := cmd.OutOrStdout()
-		if cmd == rootCmd {
-			printBanner(w)
-			if preamble := resolveGetStartedPreamble(cmd.Context()); preamble != "" {
-				// preamble already ends with "\n"; mirror the spacing used by
-				// the env-vars and docs sections below (Fprint + Fprintln)
-				// so there is exactly one blank line before the cobra body.
-				fmt.Fprint(w, preamble)
-				fmt.Fprintln(w)
-			}
+		if cmd != rootCmd {
+			defaultHelp(cmd, args)
+			return
 		}
-		defaultHelp(cmd, args)
-		if cmd == rootCmd {
+
+		printBanner(w)
+
+		// Short or Long, mirroring cobra's default-template precedence so the
+		// description still leads -- followed by the state-aware preamble
+		// before any Usage block.
+		if desc := strings.TrimRightFunc(cmd.Long, unicode.IsSpace); desc != "" {
+			fmt.Fprintln(w, desc)
 			fmt.Fprintln(w)
-			fmt.Fprint(w, environmentVariablesSection())
+		} else if desc := strings.TrimRightFunc(cmd.Short, unicode.IsSpace); desc != "" {
+			fmt.Fprintln(w, desc)
 			fmt.Fprintln(w)
-			fmt.Fprint(w, docsAndAgentSkillsSection())
 		}
+
+		if preamble := resolveGetStartedPreamble(cmd.Context()); preamble != "" {
+			// preamble already ends with "\n"; pair Fprint with Fprintln so
+			// exactly one blank line sits between it and the Usage block.
+			fmt.Fprint(w, preamble)
+			fmt.Fprintln(w)
+		}
+
+		// UsageString emits Usage / Aliases / Commands / Flags / etc. via the
+		// SDK-wrapped UsageFunc, so reserved-flag overrides still apply.
+		fmt.Fprint(w, cmd.UsageString())
+
+		fmt.Fprintln(w)
+		fmt.Fprint(w, environmentVariablesSection())
+		fmt.Fprintln(w)
+		fmt.Fprint(w, docsAndAgentSkillsSection())
 	})
 }
 
@@ -80,7 +105,6 @@ func resolveGetStartedPreamble(ctx context.Context) string {
 	if !found {
 		return formatGetStarted(
 			"No azd project detected. Get started with:",
-			"azd init                  Set up a new azd project in this directory.",
 			"azd ai agent init         Initialize an azd ai agent project.",
 		)
 	}
@@ -223,21 +247,21 @@ func environmentVariablesSection() string {
 	b.WriteString(bold.Sprint("Environments & Environment Variables:"))
 	b.WriteString("\n  azd loads environment variables from `.azure/<env-name>/.env` in your\n")
 	b.WriteString("  project. Manage them with:\n\n")
-	b.WriteString("    azd env list                  List azd environments in this project.\n")
-	b.WriteString("    azd env new <name>            Create a new azd environment.\n")
-	b.WriteString("    azd env select <name>         Switch the active azd environment.\n")
-	b.WriteString("    azd env get <KEY>             Read a value from the active env.\n")
-	b.WriteString("    azd env set <KEY> <VALUE>     Write a value to the active env.\n\n")
+	b.WriteString("  azd env list                  List azd environments in this project.\n")
+	b.WriteString("  azd env new <name>            Create a new azd environment.\n")
+	b.WriteString("  azd env select <name>         Switch the active azd environment.\n")
+	b.WriteString("  azd env get <KEY>             Read a value from the active env.\n")
+	b.WriteString("  azd env set <KEY> <VALUE>     Write a value to the active env.\n\n")
 	b.WriteString("  Variables read by this extension:\n\n")
-	b.WriteString("    AZURE_AI_PROJECT_ENDPOINT     Project endpoint, read from active azd env.\n")
-	b.WriteString("    FOUNDRY_PROJECT_ENDPOINT      Host-shell fallback when no azd env value.\n")
-	b.WriteString("    AZURE_AI_PROJECT_ID           ARM resource ID; used to build the Foundry\n")
-	b.WriteString("                                  portal playground URL.\n")
-	b.WriteString("    AGENT_<SVC>_<PROTO>_ENDPOINT  Per-service deployed endpoint URL, one per\n")
-	b.WriteString("                                  protocol (e.g. AGENT_MYAGENT_RESPONSES_ENDPOINT).\n")
-	b.WriteString("    AGENT_<SVC>_ENDPOINT          Legacy single-endpoint var for older deployments.\n")
-	b.WriteString("    AI_AGENT_PENDING_PROVISION    Internal: resources awaiting provisioning so the\n")
-	b.WriteString("                                  resolver can surface accurate next-step guidance.\n")
+	b.WriteString("  AZURE_AI_PROJECT_ENDPOINT     Project endpoint, read from active azd env.\n")
+	b.WriteString("  FOUNDRY_PROJECT_ENDPOINT      Host-shell fallback when no azd env value.\n")
+	b.WriteString("  AZURE_AI_PROJECT_ID           ARM resource ID; used to build the Foundry\n")
+	b.WriteString("                                portal playground URL.\n")
+	b.WriteString("  AGENT_<SVC>_<PROTO>_ENDPOINT  Per-service deployed endpoint URL, one per\n")
+	b.WriteString("                                protocol (e.g. AGENT_MYAGENT_RESPONSES_ENDPOINT).\n")
+	b.WriteString("  AGENT_<SVC>_ENDPOINT          Legacy single-endpoint var for older deployments.\n")
+	b.WriteString("  AI_AGENT_PENDING_PROVISION    Internal: resources awaiting provisioning so the\n")
+	b.WriteString("                                resolver can surface accurate next-step guidance.\n")
 	return b.String()
 }
 
@@ -252,13 +276,13 @@ func docsAndAgentSkillsSection() string {
 	bold := color.New(color.Bold)
 	b.WriteString(bold.Sprint("Docs & Agent Skills:"))
 	b.WriteString("\n  Inspect state, identity, and health from the terminal:\n\n")
-	b.WriteString("    azd ai agent show --output json                Inspect the deployed agent record (JSON).\n")
-	b.WriteString("    azd ai agent project show --output json        Inspect identity, subscription, and project context.\n")
-	b.WriteString("    azd ai agent doctor --output json              Diagnose configuration, auth, and deployment issues.\n")
+	b.WriteString("  azd ai agent show --output json                Inspect the deployed agent record (JSON).\n")
+	b.WriteString("  azd ai agent project show --output json        Inspect identity, subscription, and project context.\n")
+	b.WriteString("  azd ai agent doctor --output json              Diagnose configuration, auth, and deployment issues.\n")
 	b.WriteString("\n  Agent-friendly workflow docs (install the azure.ai.docs extension):\n\n")
-	b.WriteString("    azd ext install azure.ai.docs                  One-time install of the docs front door.\n")
-	b.WriteString("    azd ai doc                                     List ai.* extensions with docs available.\n")
-	b.WriteString("    azd ai doc agent                               List skill topics for this extension.\n")
-	b.WriteString("    azd ai doc agent <topic>                       Print one topic (initialize, configure, investigate, operate).\n")
+	b.WriteString("  azd ext install azure.ai.docs                  One-time install of the docs front door.\n")
+	b.WriteString("  azd ai doc                                     List ai.* extensions with docs available.\n")
+	b.WriteString("  azd ai doc agent                               List skill topics for this extension.\n")
+	b.WriteString("  azd ai doc agent <topic>                       Print one topic (initialize, configure, investigate, operate).\n")
 	return b.String()
 }

@@ -68,15 +68,18 @@ func TestFindAzureYaml_NotFound_ReturnsFalseInTempDir(t *testing.T) {
 	assert.False(t, found, "findAzureYaml should return false in an empty temp dir")
 }
 
-// TestInstallAgentsHelpOutput_PreambleSeparatedByOneBlankLine pins the spacing
-// between the "Get started" preamble and the cobra help body. The bug being
-// guarded against: an extra `\n` (Fprintln vs Fprint) produced two blank lines
-// between the preamble and the body, which was visually inconsistent with the
-// single blank line separating the env-vars and docs sections below.
-func TestInstallAgentsHelpOutput_PreambleSeparatedByOneBlankLine(t *testing.T) {
-	// t.Chdir to a fresh temp dir so findAzureYaml returns false and we hit
-	// the deterministic "No azd project detected" preamble branch -- no need
-	// to spin up an azd client.
+// TestInstallAgentsHelpOutput_DescriptionBeforePreambleBeforeUsage pins the
+// section order on the root command's --help:
+//
+//  1. cobra Short description ("Ship agents ...")
+//  2. state-aware "Get started" preamble
+//  3. Usage block
+//
+// Also asserts a single blank line between each section (regression guard for
+// the prior Fprintln-vs-Fprint spacing bug).
+func TestInstallAgentsHelpOutput_DescriptionBeforePreambleBeforeUsage(t *testing.T) {
+	// t.Chdir to a fresh temp dir so findAzureYaml returns false and the
+	// deterministic "No azd project detected" preamble fires -- no azd client.
 	t.Chdir(t.TempDir())
 
 	rootCmd := &cobra.Command{
@@ -92,25 +95,32 @@ func TestInstallAgentsHelpOutput_PreambleSeparatedByOneBlankLine(t *testing.T) {
 
 	output := buf.String()
 
-	// Last visible text emitted by the preamble.
+	descIdx := strings.Index(output, "COBRABODY-MARKER")
+	require.GreaterOrEqual(t, descIdx, 0, "Short description not found in output:\n%s", output)
+
+	preambleIdx := strings.Index(output, "No azd project detected.")
+	require.GreaterOrEqual(t, preambleIdx, 0, "preamble not found in output:\n%s", output)
+
+	usageIdx := strings.Index(output, "Usage:")
+	require.GreaterOrEqual(t, usageIdx, 0, "Usage block not found in output:\n%s", output)
+
+	// Order: description -> preamble -> Usage.
+	assert.Less(t, descIdx, preambleIdx, "Short description should appear before preamble")
+	assert.Less(t, preambleIdx, usageIdx, "preamble should appear before Usage block")
+
+	// One blank line (= exactly 2 newlines) between description and preamble.
+	gap := output[descIdx+len("COBRABODY-MARKER") : preambleIdx]
+	assert.Equal(t, "", strings.TrimSpace(gap), "unexpected non-whitespace between description and preamble: %q", gap)
+	assert.Equal(t, 2, strings.Count(gap, "\n"),
+		"expected 1 blank line between description and preamble, got %q", gap)
+
+	// One blank line between preamble's last visible text and the Usage block.
 	const preambleTail = "agent project."
 	tailIdx := strings.Index(output, preambleTail)
-	require.GreaterOrEqual(t, tailIdx, 0, "preamble tail %q not found in output:\n%s", preambleTail, output)
+	require.GreaterOrEqual(t, tailIdx, 0, "preamble tail %q not found", preambleTail)
 	tailIdx += len(preambleTail)
-
-	const bodyMarker = "COBRABODY-MARKER"
-	bodyOffset := strings.Index(output[tailIdx:], bodyMarker)
-	require.GreaterOrEqual(t, bodyOffset, 0, "body marker %q not found after preamble", bodyMarker)
-
-	gap := output[tailIdx : tailIdx+bodyOffset]
-	// Gap should be only whitespace -- nothing else lives between the
-	// preamble's last line and the cobra body's Short text.
-	assert.Equal(t, strings.TrimSpace(gap), "", "unexpected non-whitespace between preamble and body: %q", gap)
-
-	// One blank line = exactly 2 newlines (one to terminate the preamble's
-	// last line, one for the blank). Three or more newlines = the regression.
-	newlines := strings.Count(gap, "\n")
-	assert.Equal(t, 2, newlines,
-		"expected 1 blank line (2 newlines) between preamble and cobra body, got %d newlines in %q",
-		newlines, gap)
+	gap = output[tailIdx:usageIdx]
+	assert.Equal(t, "", strings.TrimSpace(gap), "unexpected non-whitespace between preamble and Usage: %q", gap)
+	assert.Equal(t, 2, strings.Count(gap, "\n"),
+		"expected 1 blank line between preamble and Usage, got %q", gap)
 }
