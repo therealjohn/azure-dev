@@ -40,6 +40,8 @@ func TestDocsAndAgentSkillsSection_ListsAgentReadCommands(t *testing.T) {
 		"azd ai agent show --output json",
 		"azd ai agent project show --output json",
 		"azd ai agent doctor --output json",
+		"azd ai agent docs",
+		"azd ai agent docs --topic",
 	} {
 		assert.True(t, strings.Contains(got, want),
 			"DOCS section missing %q", want)

@@ -239,14 +239,13 @@ func environmentVariablesSection() string {
 }
 
 // docsAndAgentSkillsSection renders the DOCS & AGENT SKILLS help block.
-// Phase 1D stub: points at commands that exist today (show, project show,
-// doctor). Phase 2 adds `azd ai agent docs` references; Phase 3 adds
-// `azd ai doc agent` once the docs extension exists.
+// Phase 1D + Phase 2: lists the agent-friendly read paths (show / project
+// show / doctor) plus the embedded-docs entry points (`azd ai agent docs`).
+// Phase 3 will switch the entry points to `azd ai doc agent` once the
+// azure.ai.docs extension exists.
 //
 // TODO(Phase 3): re-point this section at `azd ai doc agent` once the
-// azure.ai.docs extension is published. Until then, the commands listed
-// below are the agent-friendly read paths that exist in the agents
-// extension itself.
+// azure.ai.docs extension is published.
 func docsAndAgentSkillsSection() string {
 	var b strings.Builder
 	bold := color.New(color.Bold)
@@ -255,5 +254,8 @@ func docsAndAgentSkillsSection() string {
 	b.WriteString("    azd ai agent show --output json                Inspect the deployed agent record (JSON).\n")
 	b.WriteString("    azd ai agent project show --output json        Inspect identity, subscription, and project context.\n")
 	b.WriteString("    azd ai agent doctor --output json              Diagnose configuration, auth, and deployment issues.\n")
+	b.WriteString("\n  Agent-friendly workflow docs (markdown, embedded in this binary):\n\n")
+	b.WriteString("    azd ai agent docs                              List available skill topics.\n")
+	b.WriteString("    azd ai agent docs --topic <name>               Print one of: initialize, configure, investigate, operate.\n")
 	return b.String()
 }
