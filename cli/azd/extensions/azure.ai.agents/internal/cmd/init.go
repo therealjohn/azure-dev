@@ -632,7 +632,11 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 				flags.env = extCtx.Environment
 			}
 
-			printBanner(cmd.OutOrStdout())
+			// Skip the banner in non-interactive mode (CI/CD, agent-driven flows)
+			// so the decorative output does not contaminate machine-parsed logs.
+			if !flags.noPrompt {
+				printBanner(cmd.OutOrStdout())
+			}
 
 			// Resolve optional positional argument into --manifest or --src
 			if len(args) == 1 {
