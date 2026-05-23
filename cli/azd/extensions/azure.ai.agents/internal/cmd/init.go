@@ -653,6 +653,33 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 			}
 			defer azdClient.Close()
 
+			// Agent-driven onboarding pre-flow (interactive mode only).
+			// Asks whether the user wants their coding agent to drive
+			// the setup; on Yes, installs the Microsoft Foundry skill,
+			// copies a tailored starter prompt to the clipboard, and
+			// exits without running the existing init flow. On No,
+			// returns handled=false and the existing flow continues.
+			if !flags.noPrompt {
+				cwd, cwdErr := os.Getwd()
+				if cwdErr != nil {
+					return fmt.Errorf("resolve working directory: %w", cwdErr)
+				}
+				preflow := &InitPreflowAction{
+					out:       cmd.OutOrStdout(),
+					azdClient: azdClient,
+					runner:    defaultAzdRunner,
+					cwd:       cwd,
+					copyClip:  CopyToClipboard,
+				}
+				handled, preErr := preflow.Run(ctx)
+				if preErr != nil {
+					return preErr
+				}
+				if handled {
+					return nil
+				}
+			}
+
 			if err := checkAiModelServiceAvailable(ctx, azdClient); err != nil {
 				return err
 			}

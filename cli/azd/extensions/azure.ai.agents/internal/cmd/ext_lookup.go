@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -150,17 +149,3 @@ func childAzdMissingError(err error) bool {
 // defaultAzdRunner is the package-level production runner. Tests
 // construct their own runner and call the *With helpers directly.
 var defaultAzdRunner azdRunner = osAzdRunner{}
-
-// Discard is a convenience io.Writer for callers that only need the
-// exit code from a child azd run and intentionally drop its output.
-// Mirrors io.Discard but kept package-local so future changes to the
-// silenced-output story (e.g. capture + log on failure) live in one
-// place.
-var Discard io.Writer = io.Discard
-
-// dropOSEnv is used by callers that want to stream output to the
-// terminal rather than a custom writer. Returns the calling process's
-// stdout/stderr so the child's output reaches the user directly.
-func defaultOutputs() (io.Writer, io.Writer) {
-	return os.Stdout, os.Stderr
-}
