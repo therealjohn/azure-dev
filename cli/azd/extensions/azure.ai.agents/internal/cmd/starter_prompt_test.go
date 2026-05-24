@@ -19,8 +19,10 @@ func TestRenderStarterPrompt_SubstitutesProjectPath(t *testing.T) {
 		SkillPath:   ".claude/skills/azd-ai-skill",
 	})
 	require.NoError(t, err)
-	assert.Contains(t, got, "Initialize a Microsoft Foundry agent in this project at /home/user/my-app.")
-	assert.Contains(t, got, "(installed at .claude/skills/azd-ai-skill)")
+	assert.Contains(t, got, "/home/user/my-app",
+		"starter prompt must substitute the ProjectPath into the body")
+	assert.Contains(t, got, ".claude/skills/azd-ai-skill",
+		"starter prompt must mention the skill install path when one was supplied")
 }
 
 func TestRenderStarterPrompt_OmitsInstallClauseWhenSkillPathEmpty(t *testing.T) {
@@ -31,8 +33,10 @@ func TestRenderStarterPrompt_OmitsInstallClauseWhenSkillPathEmpty(t *testing.T) 
 		SkillPath:   "",
 	})
 	require.NoError(t, err)
-	assert.Contains(t, got, "Use the AZD AI skill to drive")
-	assert.NotContains(t, got, "(installed at")
+	assert.Contains(t, got, "azd ai",
+		"starter prompt must still tell the user to use azd ai when no skill is installed")
+	assert.NotContains(t, got, "skill at",
+		"starter prompt must not reference a skill install path when SkillPath is empty")
 }
 
 func TestRenderStarterPrompt_HasNoTrailingWhitespace(t *testing.T) {
@@ -41,83 +45,46 @@ func TestRenderStarterPrompt_HasNoTrailingWhitespace(t *testing.T) {
 	assert.Equal(t, got, strings.TrimRight(got, " \t\n"), "output should not end with whitespace")
 }
 
+// TestRenderStarterPrompt_IncludesCoreInstructions pins the two
+// contracts the prompt MUST carry on the user-facing side:
+//
+//   - tell the agent to use `azd ai` (the skill content handles the
+//     rest -- topic chooser, command shapes, envelope mechanics);
+//   - the human-readable ask-first contract so the user knows they
+//     will be consulted before billing-impacting steps.
+//
+// We deliberately do NOT pin SKILL.md jargon ("greenfield",
+// "manifestUrl", "AZD AI skill", "azd ai doc agent <topic>") here --
+// those belong in the skill itself, not in a one-paragraph starter
+// prompt the user is about to paste into a coding agent.
 func TestRenderStarterPrompt_IncludesCoreInstructions(t *testing.T) {
-	// Pin a handful of phrases the AI agent must see. The simplified
-	// prompt is a brief statement of intent, NOT a step-by-step recipe
-	// -- step-level commands AND envelope mechanics live in the topic
-	// bodies the agent pulls via `azd ai doc agent <topic>`. We only
-	// pin the contracts the prompt itself MUST carry:
-	//
-	//   * the AZD AI skill reference (so the agent knows where to read),
-	//   * the topic-routing call (so the agent loads details on demand),
-	//   * the ask-first contract (in human-readable form, no jargon).
 	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/x"})
 	require.NoError(t, err)
 
 	wantPhrases := []string{
-		"AZD AI skill",
-		"azd ai doc agent",
-		// Intent-level ask-first contract. We deliberately do NOT
-		// pin "confirmation_required" here -- that string is an
-		// implementation detail of the envelope contract and leaks
-		// jargon into a user-facing prompt. The skill covers the
-		// envelope mechanics; the prompt just conveys the intent.
-		"Confirm with me",
+		"azd ai",
+		"Ask me",
 	}
 	for _, want := range wantPhrases {
 		assert.Contains(t, got, want, "starter prompt must mention %q", want)
 	}
 
-	// The prompt must NOT chain --from-code after --no-prompt. The
-	// bootstrap-only state written by the pre-flow is auto-detected
-	// by promptInitMode; --from-code is now reserved for the case
-	// where the directory ALREADY contains agent code. The prompt
-	// may still mention `--from-code` in passing, so we assert the
-	// bad PAIR specifically rather than the flag in isolation.
+	// The prompt must NOT chain --from-code after --no-prompt. The skill
+	// directs coding agents to pick a curated sample via
+	// `azd ai agent sample list` and pass `-m <manifestUrl>` instead;
+	// `--from-code` is reserved for brownfield projects. Pin the bad
+	// PAIR rather than the flag in isolation so this test still works
+	// if `--from-code` is mentioned in passing somewhere.
 	assert.NotContains(t, got, "--no-prompt --from-code",
-		"starter prompt must NOT instruct the coding agent to chain --from-code "+
-			"after --no-prompt; auto-detection of the bootstrap stub handles the post-pre-flow case")
-}
-
-// TestRenderStarterPrompt_PointsAtTopicVerbs pins the simplification:
-// the prompt MUST route the AI agent into `azd ai doc agent <topic>`
-// for deep guidance instead of duplicating every flag table inline.
-// Topic names match the verbs shipped by the azure.ai.docs extension
-// (samples / initialize / develop / configure / extend / deploy /
-// evaluate / operate / investigate). If any topic is renamed or
-// removed, this test catches the drift before users do.
-func TestRenderStarterPrompt_PointsAtTopicVerbs(t *testing.T) {
-	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/x"})
-	require.NoError(t, err)
-
-	// The prompt must instruct the AI agent to pull the topic body.
-	assert.Contains(t, got, "azd ai doc agent",
-		"starter prompt must direct the agent at `azd ai doc agent <topic>` "+
-			"so deeper guidance is loaded on demand instead of duplicated inline")
-
-	// The prompt must reference the high-traffic verbs (initialize,
-	// develop, deploy, operate, investigate) so the agent knows which
-	// topics back the standard journey.
-	wantTopics := []string{
-		"initialize",
-		"develop",
-		"deploy",
-		"operate",
-		"investigate",
-	}
-	for _, want := range wantTopics {
-		assert.Contains(t, got, want,
-			"starter prompt must reference topic verb %q", want)
-	}
+		"starter prompt must NOT instruct the coding agent to chain --from-code after --no-prompt")
 }
 
 // TestRenderStarterPrompt_IsBrief pins the simplification at a coarse
-// level: a verbose step-by-step prompt (where the AI agent re-reads
-// flags + envelope mechanics + journey order inline every time) defeats
-// the purpose of installing the AZD AI skill. The agent-friendly
-// reference target is ~70-100 words; we cap the prompt at 200 words to
-// leave headroom for substituted ProjectPath / SkillPath while still
-// catching regressions.
+// level: a verbose, jargon-heavy starter prompt defeats the purpose of
+// installing the AZD AI skill (which already covers commands, flag
+// tables, envelope mechanics, and the topic chooser). The agent-
+// friendly target is well under 100 words; the cap leaves headroom for
+// substituted ProjectPath / SkillPath while still catching regressions.
 func TestRenderStarterPrompt_IsBrief(t *testing.T) {
 	got, err := renderStarterPrompt(StarterPromptVars{
 		ProjectPath: "/x",
@@ -125,10 +92,10 @@ func TestRenderStarterPrompt_IsBrief(t *testing.T) {
 	})
 	require.NoError(t, err)
 	words := len(strings.Fields(got))
-	assert.LessOrEqual(t, words, 200,
+	assert.LessOrEqual(t, words, 100,
 		"starter prompt should be a brief statement of intent, not a "+
 			"step-by-step recipe; got %d words. If you need to grow it, "+
-			"first ask whether the new content belongs in a topic body "+
+			"first ask whether the new content belongs in the skill body "+
 			"(azure.ai.docs) instead.", words)
 }
 

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"maps"
 	"net/http"
@@ -68,10 +69,10 @@ type initFlags struct {
 	force bool
 	// fromCode mirrors `azd init --from-code`. When set we treat the
 	// current directory as the source for the agent (vs. a manifest or
-	// downloaded template). It exists primarily for non-interactive
-	// callers -- the coding agent the pre-flow hands off to -- so they
-	// can deterministically pick the from-code path even when the dir
-	// contents would otherwise be ambiguous to promptInitMode.
+	// downloaded template). It exists for brownfield callers -- humans
+	// or coding agents lifting existing hand-written agent source into
+	// a hosted Foundry agent. For greenfield projects, callers should
+	// pass `-m <manifestUrl>` from `azd ai agent sample list` instead.
 	fromCode bool
 	// noPrompt is resolved from the extension context (--no-prompt / AZD_NO_PROMPT)
 	// and is not registered as a CLI flag on the init command itself.
@@ -776,8 +777,6 @@ func newInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 				//   - short-circuit on --from-code
 				//   - return a deterministic ErrorWithSuggestion in
 				//     --no-prompt mode rather than failing on Select
-				//   - print a muted "Detected AZD AI bootstrap files"
-				//     line when it silently routes through from-code
 				initMode, err := promptInitMode(ctx, azdClient, flags, cmd.OutOrStdout())
 				if err != nil {
 					if exterrors.IsCancellation(err) {
@@ -1188,42 +1187,74 @@ func (a *InitAction) Run(ctx context.Context) error {
 func ensureProject(ctx context.Context, flags *initFlags, azdClient *azdext.AzdClient) (*azdext.ProjectConfig, error) {
 	projectResponse, err := azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
 	if err != nil {
-		fmt.Println("Let's get your project initialized.")
+		// No project on disk. Decide between scaffolding the full starter
+		// template (gives infra/, azure.yaml, sample code) vs. writing
+		// just a minimal azure.yaml in-place. The starter template path
+		// only works in an empty directory: `azd init -t` prompts to
+		// confirm overwrites when the dir is not empty, and that
+		// confirmation auto-declines under --no-prompt -- which is the
+		// mode coding agents always invoke us in. Writing a minimal
+		// azure.yaml ourselves avoids the prompt and keeps the flow
+		// working in directories that already contain installed skill
+		// files (e.g. .agents/) or any other user content.
+		cwd, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			return nil, exterrors.Internal(exterrors.CodeProjectInitFailed,
+				fmt.Sprintf("failed to resolve working directory: %s", cwdErr))
+		}
 
-		// Environment creation is handled separately in ensureEnvironment
-		initArgs := []string{"init", "-t", "Azure-Samples/azd-ai-starter-basic", "."}
-		if flags.env != "" {
-			initArgs = append(initArgs, "--environment", flags.env)
-		} else {
-			cwd, err := os.Getwd()
-			if err == nil {
+		empty, emptyErr := isCwdEmptyForInit(cwd)
+		if emptyErr != nil {
+			return nil, exterrors.Internal(exterrors.CodeProjectInitFailed,
+				fmt.Sprintf("checking working directory: %s", emptyErr))
+		}
+
+		if empty {
+			fmt.Println("Let's get your project initialized.")
+
+			// Environment creation is handled separately in ensureEnvironment
+			initArgs := []string{"init", "-t", "Azure-Samples/azd-ai-starter-basic", "."}
+			if flags.env != "" {
+				initArgs = append(initArgs, "--environment", flags.env)
+			} else {
 				sanitizedDirectoryName := sanitizeAgentName(filepath.Base(cwd))
 				initArgs = append(initArgs, "--environment", sanitizedDirectoryName+"-dev")
 			}
-		}
 
-		// We don't have a project yet
-		// Dispatch a workflow to init the project
-		workflow := &azdext.Workflow{
-			Name: "init",
-			Steps: []*azdext.WorkflowStep{
-				{Command: &azdext.WorkflowCommand{Args: initArgs}},
-			},
-		}
-
-		_, err := azdClient.Workflow().Run(ctx, &azdext.RunWorkflowRequest{
-			Workflow: workflow,
-		})
-
-		if err != nil {
-			if exterrors.IsCancellation(err) {
-				return nil, exterrors.Cancelled("project initialization was cancelled")
+			// We don't have a project yet
+			// Dispatch a workflow to init the project
+			workflow := &azdext.Workflow{
+				Name: "init",
+				Steps: []*azdext.WorkflowStep{
+					{Command: &azdext.WorkflowCommand{Args: initArgs}},
+				},
 			}
-			return nil, exterrors.Dependency(
-				exterrors.CodeProjectInitFailed,
-				fmt.Sprintf("failed to initialize project: %s", err),
-				"",
-			)
+
+			_, err := azdClient.Workflow().Run(ctx, &azdext.RunWorkflowRequest{
+				Workflow: workflow,
+			})
+
+			if err != nil {
+				if exterrors.IsCancellation(err) {
+					return nil, exterrors.Cancelled("project initialization was cancelled")
+				}
+				return nil, exterrors.Dependency(
+					exterrors.CodeProjectInitFailed,
+					fmt.Sprintf("failed to initialize project: %s", err),
+					"",
+				)
+			}
+		} else {
+			// Non-empty dir: write a minimal azure.yaml ourselves rather
+			// than dispatch the heavy template scaffold. The manifest /
+			// from-code flows will populate the services section via
+			// addToProject after we return.
+			fmt.Println(output.WithGrayFormat(
+				"Adding agent to existing directory; writing a minimal azure.yaml."))
+			if err := writeMinimalAzureYaml(cwd); err != nil {
+				return nil, exterrors.Internal(exterrors.CodeProjectInitFailed,
+					fmt.Sprintf("failed to write azure.yaml: %s", err))
+			}
 		}
 
 		projectResponse, err = azdClient.Project().Get(ctx, &azdext.EmptyRequest{})
@@ -1263,6 +1294,63 @@ func ensureProject(ctx context.Context, flags *initFlags, azdClient *azdext.AzdC
 	}
 
 	return projectResponse.Project, nil
+}
+
+// isCwdEmptyForInit reports whether dir contains no entries at all.
+// Used by ensureProject to decide between scaffolding the full starter
+// template (empty dir) and writing a minimal azure.yaml in-place
+// (non-empty dir, e.g. has installed skill files under .agents/).
+//
+// Uses os.Open + Readdirnames(1) rather than os.ReadDir so we stop after
+// the first entry instead of slurping the entire listing into memory.
+func isCwdEmptyForInit(dir string) (bool, error) {
+	f, err := os.Open(dir) //nolint:gosec // dir comes from os.Getwd()
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	names, err := f.Readdirnames(1)
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	return len(names) == 0, nil
+}
+
+// writeMinimalAzureYaml writes a 3-line azure.yaml to <cwd>/azure.yaml
+// using O_CREATE|O_EXCL so we never clobber an existing file. The
+// file's only purpose is to satisfy `azdClient.Project().Get()` so the
+// rest of the manifest / from-code flows can run addToProject to
+// populate services. Infra scaffolding is intentionally NOT done here
+// -- if the user needs `azd provision`, they can run
+// `azd init -t Azure-Samples/azd-ai-starter-basic .` in an empty
+// directory before invoking the agent init (the existing warning at
+// the end of ensureProject points them at that path).
+func writeMinimalAzureYaml(cwd string) error {
+	path := filepath.Join(cwd, "azure.yaml")
+	name := sanitizeAgentName(filepath.Base(cwd))
+	content := fmt.Sprintf(
+		"# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json\n"+
+			"\n"+
+			"name: %s\n",
+		name,
+	)
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // path is cwd + fixed filename
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			// Concurrent writer beat us to it; their file is now what
+			// Project().Get() will see. Safe no-op.
+			return nil
+		}
+		return fmt.Errorf("create azure.yaml: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte(content)); err != nil {
+		return fmt.Errorf("write azure.yaml: %w", err)
+	}
+	return nil
 }
 
 func getExistingEnvironment(ctx context.Context, envName string, azdClient *azdext.AzdClient) *azdext.Environment {

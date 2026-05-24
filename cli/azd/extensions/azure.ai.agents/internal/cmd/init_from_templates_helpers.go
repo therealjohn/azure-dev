@@ -22,7 +22,6 @@ import (
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/azure/azure-dev/cli/azd/pkg/output"
-	"gopkg.in/yaml.v3"
 )
 
 const agentTemplatesURL = "https://aka.ms/foundry-agents-samples"
@@ -94,29 +93,14 @@ const (
 //
 //  2. cwd is empty -> initModeTemplate (no code to use; offer templates).
 //
-//  3. cwd is "bootstrap-only" (only the pre-flow's azure.yaml stub
-//     plus housekeeping files) -> initModeFromCode silently. We pick
-//     from-code rather than template because:
+//  3. cwd is non-empty AND --no-prompt is set -> deterministic
+//     ErrorWithSuggestion. The interactive Select would have no way to
+//     resolve in non-interactive mode; surfacing the failure with an
+//     actionable suggestion (pass --from-code or --manifest) is better
+//     than letting the prompt RPC error out. This is the path coding
+//     agents land on when they forget to pass `-m` or `--from-code`.
 //
-//     a. InitFromCodeAction.ensureProject() correctly reuses the
-//     bootstrap azure.yaml instead of re-scaffolding the starter
-//     template, so the user's pre-flow setup is honored.
-//     b. promptAgentTemplate() also requires interactive mode -- routing
-//     bootstrap-only -> initModeTemplate would just defer the
-//     --no-prompt failure to a later prompt (rubber-duck #1).
-//
-//     In interactive mode we print a muted "Detected AZD AI bootstrap
-//     files; setting up a new agent." line so the user sees WHY the
-//     init-mode prompt did not appear (rubber-duck #9). In --no-prompt
-//     mode we stay silent to keep machine logs clean.
-//
-//  4. cwd is non-empty AND not bootstrap-only AND --no-prompt is set
-//     -> deterministic ErrorWithSuggestion. The interactive Select
-//     would have no way to resolve in non-interactive mode; surfacing
-//     the failure with an actionable suggestion (pass --from-code or
-//     --manifest) is better than letting the prompt RPC error out.
-//
-//  5. Otherwise -> interactive Select prompt (the legacy behavior).
+//  4. Otherwise -> interactive Select prompt (the legacy behavior).
 func promptInitMode(
 	ctx context.Context,
 	azdClient *azdext.AzdClient,
@@ -138,40 +122,19 @@ func promptInitMode(
 		return initModeTemplate, nil
 	}
 
-	// 3. Bootstrap-only => silently route to from-code so the FOLLOW-UP
-	// `azd ai agent init` invocation after the pre-flow does not hit
-	// the wrong-shaped Select prompt.
-	bootstrap, err := dirIsAgentBootstrapOnly(".")
-	if err != nil {
-		// Do NOT swallow filesystem errors -- a permission failure
-		// here would otherwise route the user through the wrong prompt
-		// with no diagnostic.
-		return "", fmt.Errorf("checking for AZD AI bootstrap state: %w", err)
-	}
-	if bootstrap {
-		// Surface the silent short-circuit in interactive mode so the
-		// user understands WHY they did not see the usual init-mode
-		// question. Stay silent in --no-prompt mode.
-		if flags != nil && !flags.noPrompt && out != nil {
-			fmt.Fprintln(out, output.WithGrayFormat(
-				"Detected AZD AI bootstrap files; setting up a new agent."))
-		}
-		return initModeFromCode, nil
-	}
-
-	// 4. Non-empty, non-bootstrap, --no-prompt: bail with a clear
-	// suggestion rather than letting the Select RPC fail opaquely.
+	// 3. Non-empty, --no-prompt: bail with a clear suggestion rather
+	// than letting the Select RPC fail opaquely.
 	if flags != nil && flags.noPrompt {
 		return "", exterrors.Validation(
 			exterrors.CodePromptFailed,
 			"cannot determine init mode in non-interactive mode "+
-				"(directory is not empty and not from the AZD AI bootstrap pre-flow)",
+				"(directory is not empty)",
 			"Pass --from-code to use the existing code, or "+
 				"--manifest <path> to use an agent manifest.",
 		)
 	}
 
-	// 5. Interactive Select (legacy behavior).
+	// 4. Interactive Select (legacy behavior).
 	choices := []*azdext.SelectChoice{
 		{Label: "Use the code in the current directory", Value: initModeFromCode},
 		{Label: "Start new from a template", Value: initModeTemplate},
@@ -204,304 +167,6 @@ func dirIsEmpty(dir string) (bool, error) {
 	}
 
 	return len(entries) == 0, nil
-}
-
-// bootstrapOnlyFileWhitelist lists the housekeeping files most projects
-// keep at the root that we accept as "bootstrap noise" rather than user
-// code. Matched case-insensitively. Anything NOT in this list (or in
-// bootstrapOnlyDirWhitelist) makes dirIsAgentBootstrapOnly return false.
-//
-// Liberal-by-design (see plan.md "Decisions"): the cost of false
-// negatives (asking the user a useless prompt) is much higher than the
-// cost of false positives (silently routing through the from-code path
-// when there's a stray README; the from-code path's noPrompt error
-// path still surfaces a clear suggestion).
-var bootstrapOnlyFileWhitelist = []string{
-	".gitignore",
-	".gitattributes",
-	".editorconfig",
-	".ds_store",
-	"readme",
-	"readme.md",
-	"readme.txt",
-	"readme.rst",
-	"license",
-	"license.md",
-	"license.txt",
-	"contributing.md",
-	"code_of_conduct.md",
-	"security.md",
-	"changelog.md",
-	// azure.yaml is handled separately -- it MUST carry the bootstrap
-	// marker AND have no services/infra/hooks before we accept it.
-}
-
-// bootstrapOnlyDirWhitelist lists directory names we accept without
-// recursing. .claude/ and .agents/ are the well-known skill pack roots;
-// the others are editor/CI metadata most repos already have.
-//
-// We do NOT recurse into these dirs because their contents are by
-// definition "noise" relative to the question we're answering: "did the
-// user add agent code?".
-var bootstrapOnlyDirWhitelist = []string{
-	".git", // also matches the .git FILE in worktrees, handled in loop
-	".azure",
-	".azd",
-	".github",
-	".vscode",
-	".devcontainer",
-	".claude",
-	".agents",
-}
-
-// bootstrapWalkMaxDepth caps the depth at which we look for SKILL.md
-// in unknown top-level dirs (custom skill install paths). Keeps the
-// helper O(depth^N) bounded on monorepos that happen to satisfy
-// dirIsEmpty=false but bootstrap-only=true conditions.
-const bootstrapWalkMaxDepth = 4
-
-// azdAiSkillMarker is the string we look for inside any SKILL.md to
-// confirm "this is OUR skill" rather than an unrelated SKILL.md a
-// different tool wrote. The full frontmatter line is `name: AZD AI`;
-// we match the case-insensitive substring so trivial whitespace or
-// quote variations don't trip us.
-const azdAiSkillMarker = "name: AZD AI"
-
-// dirIsAgentBootstrapOnly reports whether dir contains only files we
-// recognize as "bootstrap artifacts": a marker-bearing azure.yaml stub
-// plus housekeeping files (.git, README, .vscode/, etc.) plus skill
-// install dirs. Returns false when any unknown top-level entry exists
-// OR when the azure.yaml lacks the bootstrap marker.
-//
-// We require AT LEAST ONE bootstrap signal (the marker-bearing
-// azure.yaml) -- a directory with only .git/ and a README is NOT
-// bootstrap-only, it's just an empty repo, and the caller's dirIsEmpty
-// check should have routed it differently in the first place.
-//
-// Real I/O errors are propagated, not swallowed (rubber-duck #7) --
-// degrading to "false" on EACCES could route a permission-broken repo
-// through the wrong-shaped prompt with no diagnostic.
-func dirIsAgentBootstrapOnly(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false, fmt.Errorf("read directory %s: %w", dir, err)
-	}
-	if len(entries) == 0 {
-		// Caller should have used dirIsEmpty for this case. Returning
-		// false here makes the contract explicit: bootstrap-only
-		// REQUIRES the marker.
-		return false, nil
-	}
-
-	var foundBootstrapMarker bool
-
-	for _, e := range entries {
-		name := e.Name()
-		full := filepath.Join(dir, name)
-
-		// Symlink safety: never follow a symlink that resolves outside
-		// of dir. We compare the symlink's EvalSymlinks result against
-		// dir using filepath.Rel containment, mirroring the safety
-		// pattern used by azure.ai.docs' validateCustomPath.
-		info, err := os.Lstat(full)
-		if err != nil {
-			return false, fmt.Errorf("lstat %s: %w", full, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			if !symlinkResolvesUnder(full, dir) {
-				// A symlinked .github/ pointing to /etc => not safe to
-				// classify as bootstrap-only.
-				return false, nil
-			}
-			// Even when the symlink target is inside dir, we treat the
-			// link itself as "unknown" unless its name matches the
-			// whitelist below. Fall through to the name checks.
-		}
-
-		// azure.yaml is the load-bearing signal -- if and only if it
-		// carries the bootstrap marker AND has no services/infra/hooks.
-		if strings.EqualFold(name, bootstrapAzureYamlName) {
-			ok, parseErr := azureYamlIsBootstrapStub(full)
-			if parseErr != nil {
-				return false, parseErr
-			}
-			if !ok {
-				return false, nil
-			}
-			foundBootstrapMarker = true
-			continue
-		}
-
-		// File whitelist (case-insensitive).
-		if !e.IsDir() && nameMatchesAny(name, bootstrapOnlyFileWhitelist) {
-			continue
-		}
-
-		// Directory whitelist (case-insensitive). The .git ENTRY can
-		// be a file in git worktrees -- both shapes accepted.
-		if nameMatchesAny(name, bootstrapOnlyDirWhitelist) {
-			continue
-		}
-
-		// Unknown top-level entry. For directories, fall back to the
-		// custom-skill-path probe: walk into it looking for our SKILL.md
-		// (rubber-duck #3). If we find it, the dir counts as bootstrap
-		// noise. Anything else, or a non-directory unknown file, fails.
-		if !e.IsDir() {
-			return false, nil
-		}
-		hasSkill, walkErr := dirContainsAzdAiSkill(full, bootstrapWalkMaxDepth)
-		if walkErr != nil {
-			return false, walkErr
-		}
-		if !hasSkill {
-			return false, nil
-		}
-	}
-
-	return foundBootstrapMarker, nil
-}
-
-// nameMatchesAny reports whether name matches any entry in the list,
-// case-insensitively. Hoisted so the matching logic is a single line
-// in the caller rather than an inline ToLower comparison per check.
-func nameMatchesAny(name string, list []string) bool {
-	lower := strings.ToLower(name)
-	return slices.Contains(list, lower)
-}
-
-// symlinkResolvesUnder reports whether a symlink's resolved target sits
-// inside (or equals) root. False on any EvalSymlinks failure -- we
-// fail closed because an unresolvable link is not safe to whitelist.
-func symlinkResolvesUnder(link, root string) bool {
-	resolved, err := filepath.EvalSymlinks(link)
-	if err != nil {
-		return false
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
-	absResolved, err := filepath.Abs(resolved)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(absRoot, absResolved)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	return true
-}
-
-// azureYamlIsBootstrapStub returns true when path is a valid azure.yaml
-// whose metadata.template marker is `azd-ai-bootstrap@*` AND which has
-// no `services:` / `infra:` / `hooks:` declared.
-//
-// The no-services constraint (rubber-duck #5) is what stops a real
-// project from being misclassified after the user runs through the
-// normal `azd ai agent init` flow: addToProject populates `services:`,
-// at which point this returns false even though the marker may still
-// be present.
-func azureYamlIsBootstrapStub(path string) (bool, error) {
-	//nolint:gosec // path is a fixed filename inside the user's cwd
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false, fmt.Errorf("read %s: %w", path, err)
-	}
-
-	// Decode into a permissive map so unknown future keys don't make
-	// us reject a legitimate stub. We only care about the four fields
-	// below.
-	var doc struct {
-		Metadata struct {
-			Template string `yaml:"template"`
-		} `yaml:"metadata"`
-		Services map[string]any `yaml:"services"`
-		Infra    any            `yaml:"infra"`
-		Hooks    any            `yaml:"hooks"`
-	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		// Malformed YAML => not a bootstrap stub. Don't surface the
-		// parse error: this isn't an I/O failure, it's user-supplied
-		// content the caller can route the normal way.
-		return false, nil
-	}
-
-	if !strings.HasPrefix(doc.Metadata.Template, bootstrapTemplatePrefix+"@") {
-		return false, nil
-	}
-	if len(doc.Services) > 0 {
-		return false, nil
-	}
-	if doc.Infra != nil {
-		return false, nil
-	}
-	if doc.Hooks != nil {
-		return false, nil
-	}
-	return true, nil
-}
-
-// dirContainsAzdAiSkill returns true when any SKILL.md found under root
-// (up to depthLimit subdirectories deep) contains the azdAiSkillMarker. This
-// is how we detect custom skill install paths the user supplied to the
-// pre-flow's Q3.
-func dirContainsAzdAiSkill(root string, depthLimit int) (bool, error) {
-	rootDepth := pathDepth(root)
-	var found bool
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// Skip subtrees we can't read rather than failing the entire
-			// bootstrap-only check: an EACCES on a single subdir is
-			// "no skill found here", not a fatal classification error.
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			if pathDepth(path)-rootDepth > depthLimit {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !strings.EqualFold(d.Name(), "SKILL.md") {
-			return nil
-		}
-		//nolint:gosec // path is below the user's cwd, walked from a controlled root
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		if strings.Contains(strings.ToLower(string(body)), strings.ToLower(azdAiSkillMarker)) {
-			found = true
-			return fs.SkipAll
-		}
-		return nil
-	})
-	if walkErr != nil {
-		// WalkDir only returns the err that callbacks did not consume;
-		// since we swallow per-entry errors above, anything bubbling
-		// here is unusual enough to surface.
-		return false, fmt.Errorf("walk %s for SKILL.md: %w", root, walkErr)
-	}
-	return found, nil
-}
-
-// pathDepth counts the number of separators in a cleaned path. Used by
-// dirContainsAzdAiSkill to enforce the depth cap.
-func pathDepth(p string) int {
-	cleaned := filepath.Clean(p)
-	if cleaned == "." || cleaned == string(filepath.Separator) {
-		return 0
-	}
-	return strings.Count(cleaned, string(filepath.Separator))
 }
 
 // fetchAgentTemplates retrieves the agent template catalog from the remote
