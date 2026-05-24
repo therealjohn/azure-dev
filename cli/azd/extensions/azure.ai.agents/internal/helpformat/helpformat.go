@@ -298,6 +298,16 @@ func Arg(s string) string { return output.WithWarningFormat("%s", s) }
 // Link renders a URL in the hyperlink-looking cyan, matching core azd.
 func Link(s string) string { return output.WithLinkFormat("%s", s) }
 
+// SectionHeader renders "<title>:" in the same bold + underlined style
+// the Install templates use for Usage / Available Commands / Flags /
+// Global Flags / Examples. Exposed for call sites that own their help
+// layout (e.g. the agents root's bespoke HelpFunc which prepends a
+// banner + state-aware preamble and appends an env-vars + docs block
+// around UsageString) and need their custom section headers to match.
+func SectionHeader(title string) string {
+	return sectionHeader(title)
+}
+
 // --- Template machinery (private) --------------------------------------------
 
 // nonPersistentGlobalFlags duplicates cli/azd/internal/cmd.NonPersistentGlobalFlags.

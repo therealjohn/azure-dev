@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,21 +37,59 @@ func TestEnvironmentVariablesSection_HasExpectedKeys(t *testing.T) {
 	}
 }
 
+// TestEnvironmentVariablesSection_HeaderUnderlined confirms the header
+// renders with the SAME bold+underline styling as the Install-managed
+// sections (Usage, Available Commands, Flags, Global Flags). Before
+// the SectionHeader migration it was bold-only -- visually inconsistent
+// with the styled middle of --help.
+func TestEnvironmentVariablesSection_HeaderUnderlined(t *testing.T) {
+	withColorEnabledLocal(t)
+	got := environmentVariablesSection()
+	// Underline attribute is ESC[4m; bold is ESC[1m. fatih/color may emit
+	// either order, so just assert both attributes appear ahead of the
+	// header text.
+	require.Contains(t, got, "Environments & Environment Variables:")
+	require.Contains(t, got, "\x1b[", "expected ANSI escape sequences around header")
+	require.Contains(t, got, "4m", "expected underline attribute on header")
+}
+
 func TestDocsAndAgentSkillsSection_ListsAgentReadCommands(t *testing.T) {
 	got := docsAndAgentSkillsSection()
 	for _, want := range []string{
 		"Docs & Agent Skills:",
-		"azd ai agent show --output json",
-		"azd ai agent project show --output json",
-		"azd ai agent doctor --output json",
+		"azd ai agent show",
+		"azd ai agent project show",
+		"azd ai agent doctor",
 		"azd ext install azure.ai.docs",
 		"azd ai doc",
 		"azd ai doc agent",
-		"azd ai doc agent <topic>",
+		"azd ai doc agent",
 	} {
 		assert.True(t, strings.Contains(got, want),
 			"DOCS section missing %q", want)
 	}
+}
+
+// TestDocsAndAgentSkillsSection_HeaderUnderlined is the docs-section
+// mirror of TestEnvironmentVariablesSection_HeaderUnderlined.
+func TestDocsAndAgentSkillsSection_HeaderUnderlined(t *testing.T) {
+	withColorEnabledLocal(t)
+	got := docsAndAgentSkillsSection()
+	require.Contains(t, got, "Docs & Agent Skills:")
+	require.Contains(t, got, "\x1b[", "expected ANSI escape sequences around header")
+	require.Contains(t, got, "4m", "expected underline attribute on header")
+}
+
+// withColorEnabledLocal temporarily forces color.NoColor=false so a
+// styling test can assert the escape codes that fatih/color emits.
+// Must NOT be combined with t.Parallel -- color.NoColor is process-
+// global state. Named with the "Local" suffix to disambiguate from
+// the similar helper in help_styling_test.go in the same package.
+func withColorEnabledLocal(t *testing.T) {
+	t.Helper()
+	prev := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = prev })
 }
 
 func TestFormatGetStarted_RendersHeaderAndLines(t *testing.T) {

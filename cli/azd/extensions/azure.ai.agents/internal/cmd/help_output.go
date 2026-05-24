@@ -251,26 +251,75 @@ func hasDeployedAgent(ctx context.Context, azdClient *azdext.AzdClient) bool {
 // environmentVariablesSection renders the Environments & Environment Variables help block.
 // Documents the .azure/<env>/.env mechanism plus the agent-specific vars.
 // Lives on the root --help only so it stays terse on leaf-command help.
+//
+// Header uses helpformat.SectionHeader so it matches the bold+underlined
+// styling of the Install-managed sections above (Usage, Available
+// Commands, Flags, Global Flags). Command tokens (azd env *) render
+// blue and placeholders (<name>, <KEY>, <VALUE>) render yellow, mirroring
+// the Examples block convention.
 func environmentVariablesSection() string {
 	var b strings.Builder
-	bold := color.New(color.Bold)
-	b.WriteString(bold.Sprint("Environments & Environment Variables:"))
+	b.WriteString(helpformat.SectionHeader("Environments & Environment Variables"))
 	b.WriteString("\n  azd loads environment variables from `.azure/<env-name>/.env` in your\n")
 	b.WriteString("  project. Manage them with:\n\n")
-	b.WriteString("  azd env list                  List azd environments in this project.\n")
-	b.WriteString("  azd env new <name>            Create a new azd environment.\n")
-	b.WriteString("  azd env select <name>         Switch the active azd environment.\n")
-	b.WriteString("  azd env get <KEY>             Read a value from the active env.\n")
-	b.WriteString("  azd env set <KEY> <VALUE>     Write a value to the active env.\n\n")
-	b.WriteString("  Variables read by this extension:\n\n")
-	b.WriteString("  AZURE_AI_PROJECT_ENDPOINT     Project endpoint, read from active azd env.\n")
-	b.WriteString("  FOUNDRY_PROJECT_ENDPOINT      Host-shell fallback when no azd env value.\n")
-	b.WriteString("  AZURE_AI_PROJECT_ID           ARM resource ID; used to build the Foundry\n")
+	// Right-pad the styled cell with ANSI-aware accounting: padding sits
+	// AFTER the colored token so the visible width still aligns the
+	// description column at column 32. The pad-count formula below treats
+	// each visible token character as one column, ignoring the zero-width
+	// ANSI escape bytes that fatih/color injects around the styled text.
+	envLine := func(cmd, desc string) {
+		const col = 30
+		visible := len(cmd)
+		pad := strings.Repeat(" ", max(2, col-visible))
+		b.WriteString("  ")
+		b.WriteString(helpformat.Command(cmd))
+		b.WriteString(pad)
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	envLineWithArg := func(cmd, arg, desc string) {
+		const col = 30
+		visible := len(cmd) + 1 + len(arg)
+		pad := strings.Repeat(" ", max(2, col-visible))
+		b.WriteString("  ")
+		b.WriteString(helpformat.Command(cmd))
+		b.WriteString(" ")
+		b.WriteString(helpformat.Arg(arg))
+		b.WriteString(pad)
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	envLine("azd env list", "List azd environments in this project.")
+	envLineWithArg("azd env new", "<name>", "Create a new azd environment.")
+	envLineWithArg("azd env select", "<name>", "Switch the active azd environment.")
+	envLineWithArg("azd env get", "<KEY>", "Read a value from the active env.")
+	b.WriteString(fmt.Sprintf("  %s %s %s%sWrite a value to the active env.\n",
+		helpformat.Command("azd env set"),
+		helpformat.Arg("<KEY>"),
+		helpformat.Arg("<VALUE>"),
+		strings.Repeat(" ", 30-len("azd env set <KEY> <VALUE>")),
+	))
+	b.WriteString("\n  Variables read by this extension:\n\n")
+	// Env var names render yellow to read as placeholder-like values
+	// (matching the Arg convention) so they stand out from prose.
+	varLine := func(name, desc string) {
+		const col = 30
+		visible := len(name)
+		pad := strings.Repeat(" ", max(2, col-visible))
+		b.WriteString("  ")
+		b.WriteString(helpformat.Arg(name))
+		b.WriteString(pad)
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	varLine("AZURE_AI_PROJECT_ENDPOINT", "Project endpoint, read from active azd env.")
+	varLine("FOUNDRY_PROJECT_ENDPOINT", "Host-shell fallback when no azd env value.")
+	varLine("AZURE_AI_PROJECT_ID", "ARM resource ID; used to build the Foundry")
 	b.WriteString("                                portal playground URL.\n")
-	b.WriteString("  AGENT_<SVC>_<PROTO>_ENDPOINT  Per-service deployed endpoint URL, one per\n")
+	varLine("AGENT_<SVC>_<PROTO>_ENDPOINT", "Per-service deployed endpoint URL, one per")
 	b.WriteString("                                protocol (e.g. AGENT_MYAGENT_RESPONSES_ENDPOINT).\n")
-	b.WriteString("  AGENT_<SVC>_ENDPOINT          Legacy single-endpoint var for older deployments.\n")
-	b.WriteString("  AI_AGENT_PENDING_PROVISION    Internal: resources awaiting provisioning so the\n")
+	varLine("AGENT_<SVC>_ENDPOINT", "Legacy single-endpoint var for older deployments.")
+	varLine("AI_AGENT_PENDING_PROVISION", "Internal: resources awaiting provisioning so the")
 	b.WriteString("                                resolver can surface accurate next-step guidance.\n")
 	return b.String()
 }
@@ -281,18 +330,54 @@ func environmentVariablesSection() string {
 // This section also points at the in-binary read paths that exist today
 // (show, project show, doctor) so agents can drive the most common
 // inspection workflows without installing the docs extension first.
+//
+// Header uses helpformat.SectionHeader for visual parity with the
+// Install-managed sections; command tokens render blue, --output flag
+// blue, the json arg yellow.
 func docsAndAgentSkillsSection() string {
 	var b strings.Builder
-	bold := color.New(color.Bold)
-	b.WriteString(bold.Sprint("Docs & Agent Skills:"))
+	b.WriteString(helpformat.SectionHeader("Docs & Agent Skills"))
 	b.WriteString("\n  Inspect state, identity, and health from the terminal:\n\n")
-	b.WriteString("  azd ai agent show --output json                Inspect the deployed agent record (JSON).\n")
-	b.WriteString("  azd ai agent project show --output json        Inspect identity, subscription, and project context.\n")
-	b.WriteString("  azd ai agent doctor --output json              Diagnose configuration, auth, and deployment issues.\n")
+	// Each line: blue command + blue --output flag + yellow json + padded description.
+	// The visible width is len(cmd) + " --output json" (14) = cmd+14. Aim
+	// for description column 50 -- the longest cmd is "azd ai agent project show"
+	// (25 chars) + 14 = 39, +11 spaces = 50.
+	docLine := func(cmd, desc string) {
+		const col = 48
+		visible := len(cmd) + len(" --output json")
+		pad := strings.Repeat(" ", max(2, col-visible))
+		b.WriteString("  ")
+		b.WriteString(helpformat.Command(cmd))
+		b.WriteString(" ")
+		b.WriteString(helpformat.Flag("--output"))
+		b.WriteString(" ")
+		b.WriteString(helpformat.Arg("json"))
+		b.WriteString(pad)
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	docLine("azd ai agent show", "Inspect the deployed agent record (JSON).")
+	docLine("azd ai agent project show", "Inspect identity, subscription, and project context.")
+	docLine("azd ai agent doctor", "Diagnose configuration, auth, and deployment issues.")
 	b.WriteString("\n  Agent-friendly workflow docs (install the azure.ai.docs extension):\n\n")
-	b.WriteString("  azd ext install azure.ai.docs                  One-time install of the docs front door.\n")
-	b.WriteString("  azd ai doc                                     List ai.* extensions with docs available.\n")
-	b.WriteString("  azd ai doc agent                               List skill topics for this extension.\n")
-	b.WriteString("  azd ai doc agent <topic>                       Print one topic (initialize, configure, investigate, operate).\n")
+	// These lines are plain commands, no --output flag.
+	cmdLine := func(cmd, desc string) {
+		const col = 48
+		visible := len(cmd)
+		pad := strings.Repeat(" ", max(2, col-visible))
+		b.WriteString("  ")
+		b.WriteString(helpformat.Command(cmd))
+		b.WriteString(pad)
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	cmdLine("azd ext install azure.ai.docs", "One-time install of the docs front door.")
+	cmdLine("azd ai doc", "List ai.* extensions with docs available.")
+	cmdLine("azd ai doc agent", "List skill topics for this extension.")
+	b.WriteString(fmt.Sprintf("  %s %s%sPrint one topic (initialize, configure, investigate, operate).\n",
+		helpformat.Command("azd ai doc agent"),
+		helpformat.Arg("<topic>"),
+		strings.Repeat(" ", 48-len("azd ai doc agent <topic>")),
+	))
 	return b.String()
 }
