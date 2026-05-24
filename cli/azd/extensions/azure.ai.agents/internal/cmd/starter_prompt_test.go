@@ -56,6 +56,10 @@ func TestRenderStarterPrompt_IncludesCoreInstructions(t *testing.T) {
 		"--output json",
 		"confirmation_required",
 		"--force",
+		// --from-code is required for the post-pre-flow scaffold call;
+		// pinning it here catches regressions where someone strips the
+		// flag back out of the template (e.g. as part of a doc cleanup).
+		"--from-code",
 	}
 	for _, want := range wantPhrases {
 		assert.Contains(t, got, want, "starter prompt must mention %q", want)

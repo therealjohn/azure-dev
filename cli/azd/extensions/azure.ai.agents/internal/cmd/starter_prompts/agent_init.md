@@ -16,6 +16,21 @@ end-to-end setup:
 Use `--output json` and `--no-prompt` wherever possible so the output stays
 machine-parseable and you never block on prompts.
 
+When you run `azd ai agent init` from THIS directory to scaffold the agent,
+pass `--from-code` together with `--no-prompt`. The directory contains the
+AZD AI bootstrap stub (azure.yaml with `metadata.template: azd-ai-bootstrap@*`),
+so `azd ai agent init` needs the flag to deterministically pick the "use the
+code in this directory" path instead of falling back to template selection.
+Example:
+
+```bash
+azd ai agent init --no-prompt --from-code \
+  --project-id "<projectResourceId>" \
+  --deploy-mode code \
+  --runtime python_3_13 \
+  --entry-point app.py
+```
+
 When any command exits with code 2 and a `confirmation_required` envelope,
 summarize the `changes[]` for me in plain English and wait for my approval
 before re-running with `--force`.

@@ -100,16 +100,29 @@ Branch on `.status`:
 * Any other status or a nonzero exit -- run `azd ai agent doctor --output
   json` and surface its `checks[]` failures to the human.
 
-If the project has no `azure.yaml` (Foundry project) at the cwd, you must
-scaffold first. The non-interactive scaffold invocation is:
+If the project has no `azure.yaml` (Foundry project) at the cwd, OR the
+only `azure.yaml` is the AZD AI bootstrap stub written by the pre-flow
+(`metadata.template: azd-ai-bootstrap@*`), you must scaffold an agent.
+The non-interactive scaffold invocation is:
 
 ```bash
-azd ai agent init --no-prompt \
+azd ai agent init --no-prompt --from-code \
   --project-id "<projectResourceId>" \
   --deploy-mode code \
   --runtime python_3_13 \
   --entry-point app.py
 ```
+
+Always include `--from-code` for the post-pre-flow scaffold. The flag:
+
+* Tells `azd ai agent init` to use the code in the current directory as
+  the agent's source (instead of downloading a template).
+* Is REQUIRED in `--no-prompt` mode when the directory contains the
+  AZD AI bootstrap stub OR any existing code. Without it, the command
+  cannot deterministically resolve "use existing code vs start from a
+  template?" and exits with a `prompt_failed` validation error
+  suggesting that you pass `--from-code` or `--manifest`.
+* Is mutually exclusive with `--manifest` -- pick one or the other.
 
 Substitutions:
 
