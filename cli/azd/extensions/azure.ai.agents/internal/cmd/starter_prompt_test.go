@@ -73,6 +73,39 @@ func TestRenderStarterPrompt_IncludesCoreInstructions(t *testing.T) {
 			"after --no-prompt; auto-detection of the bootstrap stub handles the post-pre-flow case")
 }
 
+// TestRenderStarterPrompt_PointsAtTopicVerbs pins the simplification:
+// the prompt MUST route the AI agent into `azd ai doc agent <topic>`
+// for deep guidance instead of duplicating every flag table inline.
+// Topic names match the verbs shipped by the azure.ai.docs extension
+// (samples / initialize / develop / configure / extend / deploy /
+// evaluate / operate / investigate). If any topic is renamed or
+// removed, this test catches the drift before users do.
+func TestRenderStarterPrompt_PointsAtTopicVerbs(t *testing.T) {
+	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/x"})
+	require.NoError(t, err)
+
+	// The journey must instruct the AI agent to pull the topic body.
+	assert.Contains(t, got, "azd ai doc agent",
+		"starter prompt must direct the agent at `azd ai doc agent <topic>` "+
+			"so deeper guidance is loaded on demand instead of duplicated inline")
+
+	// The journey must reference the verbs the agent will pull. We
+	// pin the high-traffic ones (initialize, develop, deploy,
+	// operate, investigate) explicitly so the test doesn't churn on
+	// every cosmetic edit to the prompt.
+	wantTopics := []string{
+		"initialize",
+		"develop",
+		"deploy",
+		"operate",
+		"investigate",
+	}
+	for _, want := range wantTopics {
+		assert.Contains(t, got, want,
+			"starter prompt must reference topic verb %q", want)
+	}
+}
+
 // mapClipboardEnv is the test-only clipboardEnv: a simple map.
 type mapClipboardEnv map[string]string
 
