@@ -176,6 +176,26 @@ func (a *InitPreflowAction) Run(ctx context.Context) (bool, error) {
 		installedAt = path
 	}
 
+	// Write the bootstrap azure.yaml stub BEFORE rendering the starter
+	// prompt so a failure here aborts BEFORE we mislead the user with
+	// "you're ready to go!" output. The stub is what lets the
+	// FOLLOW-UP `azd ai agent init [--no-prompt]` invocation (the one
+	// the coding agent runs after pasting the starter prompt) take the
+	// from-code path via dirIsAgentBootstrapOnly detection. Without
+	// the stub, the dir is non-empty (has the skill files) but lacks
+	// the bootstrap marker, so the follow-up would hit the wrong-
+	// shaped "use existing code vs template?" prompt -- which also
+	// fails outright in --no-prompt mode.
+	//
+	// writeBootstrapAzureYaml is a no-op (returns nil) when azure.yaml
+	// already exists, so re-running the pre-flow in a dir the user has
+	// since edited is safe. Errors here are fatal: a permission failure
+	// is the user's problem, not ours, but they should hear about it
+	// NOW rather than after pasting the prompt.
+	if err := writeBootstrapAzureYaml(a.cwd); err != nil {
+		return true, fmt.Errorf("write bootstrap azure.yaml: %w", err)
+	}
+
 	body, err := renderStarterPrompt(StarterPromptVars{
 		ProjectPath: a.cwd,
 		SkillPath:   installedAt,
