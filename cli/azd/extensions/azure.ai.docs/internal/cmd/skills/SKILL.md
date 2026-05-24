@@ -1,6 +1,7 @@
 ---
 name: azd-ai-skill
 description: Scaffold, provision, deploy, evaluate, and operate AI agents on Microsoft Foundry from the terminal using the Azure Developer CLI (azd) and the azure.ai.agents extension. USE FOR azd ai agent, foundry agent, agent.yaml, deploying agents to Azure, running an agent locally, evaluating an agent, optimizing an agent. DO NOT USE FOR generic Azure CLI tasks, non-Foundry agent runtimes (LangChain, Autogen, Semantic Kernel), or LLM application code that does not target Foundry.
+allowed-tools: ["azd", "azd ai agent", "azd ai doc"]
 ---
 # AZD AI skill
 
