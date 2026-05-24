@@ -695,3 +695,169 @@ needs the full sequence.
   - `f6c38d28b` -- documented why we pre-check the docs extension
   - `a2637a8be` -- fixed reverse-lookup bug; track chosen target directly
   - `4d2b0b00f` -- renamed Microsoft Foundry skill to AZD AI skill
+
+## Bootstrap-only init state (post-pre-flow handoff)
+
+The pre-flow leaves the directory in a specific shape that the FOLLOW-UP
+`azd ai agent init` invocation (the one the coding agent runs after
+pasting the starter prompt) must handle without re-prompting the user.
+Three coordinated mechanisms make that handoff smooth:
+
+### Why the pre-flow writes `azure.yaml`
+
+After the pre-flow installs the AZD AI skill, the cwd contains
+`.agents/skills/azd-ai-skill/` (or `.claude/skills/azd-ai-skill/`).
+The directory is non-empty, but the user has no agent code -- they
+have a skill the coding agent uses to drive setup.
+
+Without intervention, the follow-up `azd ai agent init` invocation
+falls through to `promptInitMode()`, which:
+
+- In interactive mode, asks "use the code in the current directory vs
+  start new from a template?" -- a wrong-shaped question (neither
+  option matches the user's intent).
+- In `--no-prompt` mode, fails outright because Select cannot resolve
+  in non-interactive mode.
+
+The fix is to write a minimal `azure.yaml` stub at the end of the
+pre-flow:
+
+```yaml
+# yaml-language-server: $schema=...azure.yaml.json
+
+name: <sanitized-cwd-basename>
+metadata:
+  template: azd-ai-bootstrap@<extension-version>
+```
+
+The stub is written via `writeBootstrapAzureYaml` in
+`init_preflow_bootstrap.go`. Key contract decisions:
+
+- **`O_CREATE|O_EXCL` -- never clobber.** An existing `azure.yaml`
+  (user's real project, previous pre-flow run, race) is left alone.
+  EEXIST is treated as success no-op.
+- **Non-EEXIST errors are fatal.** A failure to write the stub means
+  the follow-up init will hit the unfixed wrong-shaped prompt. The
+  user must hear about that NOW, before pasting the prompt.
+- **Always written when Q1=Yes.** Even when Q2=No (the user declined
+  the skill install), the stub is still written so the directory's
+  bootstrap state is independent of the skill-install decision.
+
+### The `metadata.template: azd-ai-bootstrap@*` marker contract
+
+The marker reuses the existing `metadata.template` field convention
+(used by `azd init -t <template>` to track template provenance). No
+new schema surface.
+
+`dirIsAgentBootstrapOnly()` (in `init_from_templates_helpers.go`) keys
+off the marker plus a **no-services-or-infra-or-hooks** constraint:
+
+- Marker present + empty `services:`/`infra:`/`hooks:` => bootstrap-only.
+- Marker present + populated `services:` => REAL project, not bootstrap.
+
+The no-services constraint is what stops a real project from being
+misclassified after the user runs through the normal `azd ai agent init`
+flow. `addToProject` populates `services:`, at which point the marker
+is meaningless and the helper returns false even though the marker
+itself may still be present.
+
+### The bootstrap-only whitelist
+
+`dirIsAgentBootstrapOnly()` accepts only files that look like
+"bootstrap noise" rather than user code:
+
+- Marker-bearing `azure.yaml` (REQUIRED -- the helper returns false
+  without it).
+- Housekeeping files (case-insensitive): `.git` (dir or file for
+  worktrees), `.gitignore`, `.gitattributes`, `.editorconfig`,
+  `.DS_Store`, `README*` (md/txt/rst), `LICENSE*` (md/txt),
+  `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
+  `CHANGELOG.md`.
+- Editor / CI metadata dirs: `.azure/`, `.azd/`, `.github/`,
+  `.vscode/`, `.devcontainer/`.
+- Skill pack roots: `.claude/`, `.agents/` -- accepted without
+  recursing.
+- Custom skill paths (Q3=custom in the pre-flow): unknown top-level
+  dirs are probed up to depth 4 looking for any `SKILL.md` whose
+  front-matter contains `name: AZD AI`. Found => the parent dir
+  counts as bootstrap noise.
+
+Symlinks are checked with `EvalSymlinks` + containment under cwd; a
+`.github/` symlinked outside the project rejects the dir. Real I/O
+errors are propagated, not swallowed, so a permission-broken repo
+surfaces a diagnostic instead of degrading to "the wrong prompt with
+no explanation".
+
+### Why bootstrap-only routes to `initModeFromCode`, not `initModeTemplate`
+
+Reflexive thinking would route bootstrap-only to `initModeTemplate`
+(no real code => fresh start). That is wrong:
+
+- `promptAgentTemplate()` also requires interactive mode -- routing to
+  template under `--no-prompt` just defers the failure.
+- `InitFromCodeAction.ensureProject()` calls `Project().Get()`, which
+  succeeds because the bootstrap `azure.yaml` exists, so the action
+  reuses the stub instead of re-scaffolding the starter template.
+  This is the correct behavior: the pre-flow has already done the
+  "give me a clean slate" work; the follow-up init just needs to add
+  the agent service.
+
+The routing decision lives in `promptInitMode()` and is documented at
+length in the function comment.
+
+### The `--from-code` flag and the deterministic `--no-prompt` failure
+
+`azd ai agent init --from-code` (boolean) is the new explicit
+"treat cwd as the source" intent, mirroring `azd init --from-code` in
+core. It is the recommended way for non-interactive callers (the
+coding agent) to express the from-code intent:
+
+- Wins over directory-state inference (rule #1 in `promptInitMode`).
+- Mutually exclusive with `--manifest` / positional manifest -- the
+  combination is rejected by `validateInitModeFlags` with a
+  `CodeConflictingArguments` error.
+- Skips `detectLocalManifest()` so a stray `agent.yaml` cannot
+  silently promote itself to `manifestPointer` and route the user
+  through the manifest flow they explicitly opted out of.
+
+When the dir is non-empty, NOT bootstrap-only, AND `--no-prompt` is
+set, `promptInitMode` returns a deterministic `CodePromptFailed`
+`Validation` error whose `Suggestion` names BOTH escape hatches
+(`--from-code`, `--manifest`). This is the rubber-duck #4 fix: better
+to fail with an actionable suggestion than to let the Select RPC
+error out with a generic gRPC status.
+
+### Version skew safety
+
+Both `SKILL.md` (long-lived in the user's project once installed) and
+`starter_prompts/agent_init.md` (one-shot, copied to clipboard by the
+pre-flow) now teach the post-pre-flow scaffold invocation to pass
+`--from-code`. The agents-side bootstrap-only detection routes
+correctly even when the flag is missing, so OLDER installed skills
+that pre-date this change still work -- the doc updates are
+belt-and-suspenders, not load-bearing.
+
+### Implementation commits
+
+- `feat(azure.ai.agents): add bootstrap azure.yaml stub writer` --
+  `writeBootstrapAzureYaml` with O_CREATE|O_EXCL contract.
+- `feat(azure.ai.agents): detect bootstrap-only directory state` --
+  `dirIsAgentBootstrapOnly` helper + whitelist.
+- `feat(azure.ai.agents): add --from-code flag and skip manifest
+  detection when set` -- new flag + mutual-exclusion validation.
+- `feat(azure.ai.agents): route bootstrap-only init through from-code
+  path` -- `promptInitMode` rerouted.
+- `feat(azure.ai.agents): write bootstrap azure.yaml at end of
+  pre-flow` -- `InitPreflowAction.Run` wired up.
+- `docs(azure.ai.*): include --from-code in scaffold instructions` --
+  SKILL.md and starter prompt updated.
+
+### Followups (out of scope for this change)
+
+- `--minimal` flag on `azd ai agent init` to mirror `azd init
+  --minimal` for callers who want a bare project skeleton.
+- Optional version check on `azure.ai.docs` from `azure.ai.agents` so
+  the pre-flow can warn (not fail) when an old docs extension is
+  installed without the `--from-code` instruction in its SKILL.md.
+- Documented recovery path for users who run `azd init -t <template> .`
+  AFTER the pre-flow and hit the inevitable `azure.yaml` collision.
