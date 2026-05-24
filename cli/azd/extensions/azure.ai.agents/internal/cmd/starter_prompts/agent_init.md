@@ -17,14 +17,16 @@ Use `--output json` and `--no-prompt` wherever possible so the output stays
 machine-parseable and you never block on prompts.
 
 When you run `azd ai agent init` from THIS directory to scaffold the agent,
-pass `--from-code` together with `--no-prompt`. The directory contains the
-AZD AI bootstrap stub (azure.yaml with `metadata.template: azd-ai-bootstrap@*`),
-so `azd ai agent init` needs the flag to deterministically pick the "use the
-code in this directory" path instead of falling back to template selection.
+pass `--no-prompt` so the command runs non-interactively. You do NOT need
+to pass `--from-code` -- the directory contains the AZD AI bootstrap stub
+(azure.yaml with `metadata.template: azd-ai-bootstrap@*`), which
+`azd ai agent init` detects and routes through the from-code path
+automatically. `--from-code` is reserved for the case where THE
+DIRECTORY ALREADY CONTAINS YOUR AGENT CODE.
 Example:
 
 ```bash
-azd ai agent init --no-prompt --from-code \
+azd ai agent init --no-prompt \
   --project-id "<projectResourceId>" \
   --deploy-mode code \
   --runtime python_3_13 \

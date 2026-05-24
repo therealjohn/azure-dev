@@ -56,14 +56,21 @@ func TestRenderStarterPrompt_IncludesCoreInstructions(t *testing.T) {
 		"--output json",
 		"confirmation_required",
 		"--force",
-		// --from-code is required for the post-pre-flow scaffold call;
-		// pinning it here catches regressions where someone strips the
-		// flag back out of the template (e.g. as part of a doc cleanup).
-		"--from-code",
 	}
 	for _, want := range wantPhrases {
 		assert.Contains(t, got, want, "starter prompt must mention %q", want)
 	}
+
+	// The post-pre-flow scaffold invocation must NOT chain --from-code
+	// after --no-prompt. The bootstrap-only state written by the
+	// pre-flow is auto-detected by promptInitMode; --from-code is now
+	// reserved for the case where the directory ALREADY contains agent
+	// code. The prompt may still MENTION the flag (to explain that the
+	// agent does not need it for this scenario), so we assert the bad
+	// pair specifically rather than the flag name in isolation.
+	assert.NotContains(t, got, "--no-prompt --from-code",
+		"starter prompt must NOT instruct the coding agent to chain --from-code "+
+			"after --no-prompt; auto-detection of the bootstrap stub handles the post-pre-flow case")
 }
 
 // mapClipboardEnv is the test-only clipboardEnv: a simple map.

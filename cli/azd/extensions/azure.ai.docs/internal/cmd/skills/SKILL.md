@@ -106,22 +106,31 @@ only `azure.yaml` is the AZD AI bootstrap stub written by the pre-flow
 The non-interactive scaffold invocation is:
 
 ```bash
-azd ai agent init --no-prompt --from-code \
+azd ai agent init --no-prompt \
   --project-id "<projectResourceId>" \
   --deploy-mode code \
   --runtime python_3_13 \
   --entry-point app.py
 ```
 
-Always include `--from-code` for the post-pre-flow scaffold. The flag:
+You do NOT need to pass `--from-code` for the post-pre-flow scaffold.
+`azd ai agent init` detects the bootstrap stub
+(`metadata.template: azd-ai-bootstrap@*`) and routes through the from-code
+path automatically.
+
+`--from-code` is reserved for the explicit case where the directory
+already contains YOUR AGENT CODE (not just the bootstrap stub). Pass it
+when:
+
+* You authored agent source files (Python, .NET, Node.js) in the cwd
+  BEFORE running `azd ai agent init`, AND
+* You want to be explicit so the command does not attempt to scan the
+  directory or fall through to template selection.
+
+When set, `--from-code`:
 
 * Tells `azd ai agent init` to use the code in the current directory as
   the agent's source (instead of downloading a template).
-* Is REQUIRED in `--no-prompt` mode when the directory contains the
-  AZD AI bootstrap stub OR any existing code. Without it, the command
-  cannot deterministically resolve "use existing code vs start from a
-  template?" and exits with a `prompt_failed` validation error
-  suggesting that you pass `--from-code` or `--manifest`.
 * Is mutually exclusive with `--manifest` -- pick one or the other.
 
 Substitutions:

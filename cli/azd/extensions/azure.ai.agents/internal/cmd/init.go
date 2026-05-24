@@ -928,8 +928,7 @@ func newInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	cmd.Flags().BoolVar(&flags.fromCode, "from-code", false,
 		"Use the code in the current directory as the source for the agent. "+
 			"Equivalent to choosing 'Use the code in the current directory' at the interactive prompt. "+
-			"Mutually exclusive with --manifest. Recommended in --no-prompt mode when the directory "+
-			"contains code (or the AZD AI bootstrap stub) and you want a deterministic init path.")
+			"Mutually exclusive with --manifest.")
 
 	// Install styled help last -- after every flag and subcommand has been
 	// registered -- so the dynamic Available Commands / Flags sections
@@ -968,8 +967,8 @@ func getCmdInitHelpDescription(*cobra.Command) string {
 			helpformat.Flag("--from-code"),
 		)),
 		helpformat.Note(fmt.Sprintf(
-			"In %s mode pass %s for a deterministic init path when the directory is "+
-				"non-empty (or was just primed by the agent-driven onboarding pre-flow).",
+			"In %s mode pass %s for a deterministic init path when the current directory already "+
+				"contains your agent code.",
 			helpformat.Flag("--no-prompt"),
 			helpformat.Flag("--from-code"),
 		)),
