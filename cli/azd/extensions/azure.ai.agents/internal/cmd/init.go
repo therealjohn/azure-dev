@@ -628,7 +628,15 @@ func newInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 			// Skip the banner in non-interactive mode (CI/CD, agent-driven flows)
 			// so the decorative output does not contaminate machine-parsed logs.
 			if !flags.noPrompt {
-				printBanner(cmd.OutOrStdout())
+				out := cmd.OutOrStdout()
+				printBanner(out)
+				// Print the root command's one-liner (e.g. "Ship agents
+				// with Microsoft Foundry from your terminal. (Preview)")
+				// between the banner and the pre-flow prompts so the
+				// user sees the extension's identity before being asked
+				// to make a decision. Matches the banner + Short order
+				// used by `azd ai agent --help`.
+				printTagline(out, cmd.Root().Short)
 			}
 
 			// Resolve optional positional argument into --manifest or --src

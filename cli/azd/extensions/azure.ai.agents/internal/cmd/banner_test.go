@@ -69,3 +69,21 @@ func stripAnsi(s string) string {
 	}
 	return out.String()
 }
+
+func TestPrintTaglineWritesTrimmedTaglineFollowedByBlankLine(t *testing.T) {
+	var buf bytes.Buffer
+	printTagline(&buf, "Ship agents with Microsoft Foundry from your terminal. (Preview)\n")
+
+	out := buf.String()
+	assert.Equal(t,
+		"Ship agents with Microsoft Foundry from your terminal. (Preview)\n\n",
+		out,
+		"tagline should be printed once with a trailing blank line and no extra leading newline",
+	)
+}
+
+func TestPrintTaglineEmptyIsNoOp(t *testing.T) {
+	var buf bytes.Buffer
+	printTagline(&buf, "   \n\t  ")
+	assert.Empty(t, buf.String(), "all-whitespace tagline should produce no output")
+}
