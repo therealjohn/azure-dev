@@ -75,7 +75,8 @@ func TestDocRootHelp_StyledSections(t *testing.T) {
 func TestDocRootHelp_NoLegacyExamplesInLong(t *testing.T) {
 	root := NewRootCommand()
 	assert.NotContains(t, root.Long, "Examples:",
-		"root.Long must not contain 'Examples:' prose after migration; cmd.Example holds the migrated source for helpformat.Install to auto-promote")
+		"root.Long must not contain 'Examples:' prose after migration; "+
+			"cmd.Example holds the migrated source for helpformat.Install to auto-promote")
 }
 
 // TestDocAgentHelp_Smoke confirms the agent (topic) command gets

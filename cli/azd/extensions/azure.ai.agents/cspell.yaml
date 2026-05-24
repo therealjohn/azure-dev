@@ -74,3 +74,6 @@ words:
   - uppercases
   - parseable
   - azd's
+  # Help styling helpers (cli/azd/extensions/*/internal/helpformat)
+  - helpformat
+  - cmdhelp

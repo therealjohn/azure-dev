@@ -1,2 +1,5 @@
 import: ../../.vscode/cspell.yaml
-words: []
+words:
+  # Help styling helpers (cli/azd/extensions/*/internal/helpformat)
+  - helpformat
+  - cmdhelp

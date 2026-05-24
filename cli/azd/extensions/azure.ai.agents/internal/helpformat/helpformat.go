@@ -216,11 +216,11 @@ func Examples(samples map[string]string) string {
 
 // parseExampleText converts the legacy cobra.Command.Example shape --
 //
-//	  # Title one
-//	  azd ai agent foo --flag value
+//	# Title one
+//	azd ai agent foo --flag value
 //
-//	  # Title two
-//	  azd ai agent bar
+//	# Title two
+//	azd ai agent bar
 //
 // into a map[title]command. Multiple command lines under one title are
 // joined with " ". Tokens starting with "--" are rendered blue (flag);
@@ -245,7 +245,7 @@ func parseExampleText(raw string) map[string]string {
 		}
 		out[currentTitle] = styleExampleCommand(body)
 	}
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
 		if trimmed == "" {
 			continue

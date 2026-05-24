@@ -73,9 +73,9 @@ func TestExamples_DeterministicOrder(t *testing.T) {
 	withColorDisabled(t) // suppress ANSI so substring asserts are stable
 
 	samples := map[string]string{
-		"Zebra example":   "azd ai agent zebra",
-		"Alpha example":   "azd ai agent alpha",
-		"Mango example":   "azd ai agent mango",
+		"Zebra example": "azd ai agent zebra",
+		"Alpha example": "azd ai agent alpha",
+		"Mango example": "azd ai agent mango",
 	}
 	out := Examples(samples)
 	// "Alpha" < "Mango" < "Zebra" alphabetically.
