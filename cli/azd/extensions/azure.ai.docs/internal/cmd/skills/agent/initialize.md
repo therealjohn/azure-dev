@@ -50,6 +50,23 @@ Exit codes: `0` always (this command never fails when ANY field can be
 resolved). A nonzero exit means the azd host itself is unreachable; show
 the error to the human.
 
+### Resolving subscription / location when `project show` is empty
+
+If you still need a subscription or location (e.g. the human has not
+chosen a Foundry project yet and you need to seed `--project-id` or a
+`provision` location), keep using `azd` -- do NOT shell out to `az`:
+
+1. `azd config get defaults` -- returns the user-level azd defaults
+   as JSON: `{ "location": "...", "subscription": "..." }`. These are
+   the same defaults the interactive prompts seed.
+2. `azd env get-values` -- the active azd environment's variables
+   (look for `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`,
+   `AZURE_AI_PROJECT_ENDPOINT`).
+3. Ask the human.
+4. Last resort: `az account list --output json` -- only after 1-3 are
+   exhausted AND the human has approved the shell-out. Users who
+   picked `azd` typically did so to avoid juggling two CLIs.
+
 ----------------------------------------------------------------------
 
 ## Step 2 -- Verify what's already deployed

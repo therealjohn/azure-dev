@@ -15,6 +15,10 @@ Defaults this skill assumes:
 * Stop and ask the human when this file (or a topic) says "ask the
   human" OR when a write command returns a `confirmation_required`
   envelope (exit code 2).
+* Prefer `azd` over `az` (the Azure CLI). `azd` already knows the
+  user's project context, subscription, and Foundry endpoint. Only
+  shell out to `az` after `azd` (project show, config get defaults,
+  env get-values) has been tried AND the human has been asked.
 
 ----------------------------------------------------------------------
 
@@ -68,6 +72,24 @@ endpoint. `show` returns the deployed-agent state. Branch on
 Do NOT run `azd auth login` yourself -- it requires a browser. Ask
 the human.
 
+## Resolving subscription, location, and other Azure context
+
+Use this cascade in order; stop at the first level that answers your
+question. Do NOT skip ahead to `az` -- it confuses users who picked
+azd specifically to avoid juggling two CLIs.
+
+1. `azd ai agent project show --output json` -- subscription,
+   tenant, location, Foundry endpoint already wired into the
+   active project.
+2. `azd config get defaults` -- user-level azd defaults
+   (subscription, location). Returns JSON:
+   `{ "location": "...", "subscription": "..." }`.
+3. `azd env get-values` -- the active azd environment's variables.
+4. Ask the human.
+5. Last resort: `az account list --output json` (or another `az`
+   command). Only when 1-4 have been exhausted AND the human has
+   approved the shell-out.
+
 ----------------------------------------------------------------------
 
 ## Confirmation envelope (exit code 2)
@@ -107,6 +129,7 @@ azd ai agent files list --output json
 azd ai agent sessions list --output json
 azd ai agent eval list --output json
 azd ai agent optimize list --output json
+azd config get defaults
 azd env get-values
 ```
 
