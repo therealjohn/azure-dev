@@ -65,6 +65,13 @@ type initFlags struct {
 	// mirrors the `--force` convention used by `azd down`, `azd env remove`,
 	// `azd config reset`, and `azd infra generate`.
 	force bool
+	// fromCode mirrors `azd init --from-code`. When set we treat the
+	// current directory as the source for the agent (vs. a manifest or
+	// downloaded template). It exists primarily for non-interactive
+	// callers -- the coding agent the pre-flow hands off to -- so they
+	// can deterministically pick the from-code path even when the dir
+	// contents would otherwise be ambiguous to promptInitMode.
+	fromCode bool
 	// noPrompt is resolved from the extension context (--no-prompt / AZD_NO_PROMPT)
 	// and is not registered as a CLI flag on the init command itself.
 	noPrompt bool
@@ -645,6 +652,17 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 				}
 			}
 
+			// Validate init-mode flag combinations BEFORE any I/O so the
+			// failure is deterministic and independent of detection
+			// outcomes. --from-code declares an intent ("treat cwd as
+			// the source"); --manifest declares a different intent
+			// ("download/use this manifest"). They cannot both be true.
+			// This check covers positional manifest args too because
+			// applyPositionalArg above resolves them into manifestPointer.
+			if err := validateInitModeFlags(flags); err != nil {
+				return err
+			}
+
 			ctx := azdext.WithAccessToken(cmd.Context())
 
 			azdClient, err := azdext.NewAzdClient()
@@ -701,8 +719,12 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 			}
 
 			// Auto-detect an existing agent manifest in the target directory
-			// when no --manifest flag was provided.
-			if flags.manifestPointer == "" {
+			// when no --manifest flag was provided. Skipped entirely when
+			// --from-code is set: that flag is an explicit "use the code
+			// in this directory" intent, and silently promoting a stray
+			// agent.yaml into manifestPointer would route the user through
+			// the manifest flow they explicitly opted out of.
+			if flags.manifestPointer == "" && !flags.fromCode {
 				checkDir := flags.src
 				if checkDir == "" {
 					checkDir = "."
@@ -909,6 +931,12 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 	cmd.Flags().BoolVar(&flags.force, "force", false,
 		"Overwrite an input manifest that already lives inside the generated src tree without prompting. "+
 			"Required together with --no-prompt when init would otherwise need confirmation.")
+
+	cmd.Flags().BoolVar(&flags.fromCode, "from-code", false,
+		"Use the code in the current directory as the source for the agent. "+
+			"Equivalent to choosing 'Use the code in the current directory' at the interactive prompt. "+
+			"Mutually exclusive with --manifest. Recommended in --no-prompt mode when the directory "+
+			"contains code (or the AZD AI bootstrap stub) and you want a deterministic init path.")
 
 	return cmd
 }
@@ -1617,6 +1645,28 @@ func resolvePositionalArg(arg string) (isManifest bool, isSrc bool, err error) {
 
 // applyPositionalArg resolves a positional argument and maps it to the
 // appropriate flag, returning an error if the flag was already set explicitly.
+// validateInitModeFlags rejects mutually-exclusive init-mode inputs
+// before any I/O. Today the only combination we reject is
+// --from-code + --manifest (the latter includes both -m and a
+// positional manifest argument, since applyPositionalArg has already
+// folded those into flags.manifestPointer by the time this runs).
+//
+// We surface a structured Validation error so the exterrors pipeline
+// records a stable code (CodeConflictingArguments) and the user sees
+// an actionable suggestion -- mirrors the ErrMultipleInitModes pattern
+// in cli/azd/cmd/init.go for the same conflict on core `azd init`.
+func validateInitModeFlags(flags *initFlags) error {
+	if flags.fromCode && flags.manifestPointer != "" {
+		return exterrors.Validation(
+			exterrors.CodeConflictingArguments,
+			"cannot use --from-code together with --manifest (or a positional manifest argument)",
+			"choose one: --from-code to use the code in this directory, OR "+
+				"--manifest <path> to use an agent manifest",
+		)
+	}
+	return nil
+}
+
 func applyPositionalArg(arg string, flags *initFlags, cmd *cobra.Command) error {
 	isManifest, isSrc, err := resolvePositionalArg(arg)
 	if err != nil {
