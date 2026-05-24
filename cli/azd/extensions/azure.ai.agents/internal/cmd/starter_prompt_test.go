@@ -44,20 +44,25 @@ func TestRenderStarterPrompt_HasNoTrailingWhitespace(t *testing.T) {
 func TestRenderStarterPrompt_IncludesCoreInstructions(t *testing.T) {
 	// Pin a handful of phrases the AI agent must see. The simplified
 	// prompt is a brief statement of intent, NOT a step-by-step recipe
-	// -- step-level commands live in the topic bodies the agent pulls
-	// via `azd ai doc agent <topic>`. We only pin the contracts the
-	// prompt itself MUST carry:
+	// -- step-level commands AND envelope mechanics live in the topic
+	// bodies the agent pulls via `azd ai doc agent <topic>`. We only
+	// pin the contracts the prompt itself MUST carry:
 	//
 	//   * the AZD AI skill reference (so the agent knows where to read),
-	//   * the envelope contract (so the agent never auto-approves),
-	//   * the topic-routing call (so the agent loads details on demand).
+	//   * the topic-routing call (so the agent loads details on demand),
+	//   * the ask-first contract (in human-readable form, no jargon).
 	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/x"})
 	require.NoError(t, err)
 
 	wantPhrases := []string{
 		"AZD AI skill",
 		"azd ai doc agent",
-		"confirmation_required",
+		// Intent-level ask-first contract. We deliberately do NOT
+		// pin "confirmation_required" here -- that string is an
+		// implementation detail of the envelope contract and leaks
+		// jargon into a user-facing prompt. The skill covers the
+		// envelope mechanics; the prompt just conveys the intent.
+		"Confirm with me",
 	}
 	for _, want := range wantPhrases {
 		assert.Contains(t, got, want, "starter prompt must mention %q", want)
