@@ -30,6 +30,8 @@ import (
 	"strings"
 	"unicode"
 
+	"azureaiagent/internal/helpformat"
+
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -46,7 +48,15 @@ import (
 //	Docs & Agent Skills
 //
 // Subcommand --help is delegated unchanged to cobra's default HelpFunc.
+//
+// We install a styled UsageTemplate on the root so the cmd.UsageString()
+// call below returns underlined-header sections. We deliberately do NOT
+// call helpformat.Install (which would also set a HelpTemplate); the
+// root keeps its bespoke HelpFunc so the banner / state-aware preamble /
+// trailing env-vars / docs sections continue to bracket the styled middle.
 func installAgentsHelpOutput(rootCmd *cobra.Command) {
+	helpformat.InstallUsageOnly(rootCmd)
+
 	defaultHelp := rootCmd.HelpFunc()
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		w := cmd.OutOrStdout()

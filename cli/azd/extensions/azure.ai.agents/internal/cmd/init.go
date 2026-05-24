@@ -23,6 +23,7 @@ import (
 
 	"azureaiagent/internal/cmd/nextstep"
 	"azureaiagent/internal/exterrors"
+	"azureaiagent/internal/helpformat"
 	"azureaiagent/internal/pkg/agents"
 	"azureaiagent/internal/pkg/agents/agent_api"
 	"azureaiagent/internal/pkg/agents/agent_yaml"
@@ -609,29 +610,14 @@ func newInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [<path>] [-m <manifest pointer>] [--src <source directory>]",
 		Short: fmt.Sprintf("Initialize a new AI agent project. %s", color.YellowString("(Preview)")),
-		Long: `Initialize a new AI agent project.
-
-The agent name written to agent.yaml is the Foundry agent identity. Foundry
-agents are unique by name within a project, so deploying with an existing name
-creates a new version of that existing agent instead of a separate agent.
-
-Use --agent-name to choose a unique Foundry agent name when initializing from
-a reusable sample or manifest.
-
-A default .agentignore file is generated to control which files are excluded
-from code-deploy ZIP packaging (uses .gitignore syntax).`,
-		Example: `  # Initialize from an agent manifest
-  azd ai agent init -m ./agent.manifest.yaml
-
-  # Initialize from a manifest with a unique Foundry agent name
-  azd ai agent init -m ./agent.manifest.yaml --agent-name my-unique-agent
-
-  # Initialize from local agent code
-  azd ai agent init --src ./src/my-agent --agent-name my-unique-agent
-
-  # Non-interactive code deploy (CI/CD)
-  azd ai agent init --no-prompt --project-id "<resource-id>" \
-    --deploy-mode code --runtime python_3_13 --entry-point app.py`,
+		// Long intentionally empty: helpformat.Install below uses
+		// getCmdInitHelpDescription as the preamble (with bullets and
+		// inline coloring). cobra would otherwise prefer Long over Short
+		// when rendering --help, masking the styled description.
+		// Examples migrated into getCmdInitHelpFooter; removing the
+		// cobra.Command.Example field here prevents the legacy
+		// uncolored Examples block from rendering alongside the styled
+		// block.
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			flags.noPrompt = extCtx.NoPrompt
@@ -945,7 +931,87 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 			"Mutually exclusive with --manifest. Recommended in --no-prompt mode when the directory "+
 			"contains code (or the AZD AI bootstrap stub) and you want a deterministic init path.")
 
+	// Install styled help last -- after every flag and subcommand has been
+	// registered -- so the dynamic Available Commands / Flags sections
+	// inspect the final command state. Examples migrated out of the
+	// cobra.Command.Example field above into getCmdInitHelpFooter so
+	// arguments render in yellow and command tokens in blue. Bullets in
+	// getCmdInitHelpDescription cover the three init modes (manifest /
+	// existing code / template) and the --no-prompt deterministic path.
+	helpformat.Install(cmd, helpformat.Options{
+		Description: getCmdInitHelpDescription,
+		Footer:      getCmdInitHelpFooter,
+	})
+
 	return cmd
+}
+
+// getCmdInitHelpDescription renders the --help preamble for `azd ai agent init`.
+// Bullets follow core azd's pattern: one per high-level scenario. The
+// first sentence (without bullets) goes in cmd.Short; this preamble lives
+// in cmd.Long replacement so users see scenario-shaped guidance before
+// the Usage block.
+func getCmdInitHelpDescription(*cobra.Command) string {
+	return helpformat.Description(
+		"Initialize a new AI agent project. The agent name written to agent.yaml "+
+			"is the Foundry agent identity; deploying with an existing name creates a new "+
+			"version of that agent.",
+		helpformat.Note(fmt.Sprintf(
+			"Running %s with no flags prompts you to start from local code, an existing "+
+				"agent manifest, or a Microsoft sample template.",
+			helpformat.Command("azd ai agent init"),
+		)),
+		helpformat.Note(fmt.Sprintf(
+			"Use %s to point at an existing agent manifest. Use %s to use code in the current "+
+				"directory. The two flags are mutually exclusive.",
+			helpformat.Flag("--manifest"),
+			helpformat.Flag("--from-code"),
+		)),
+		helpformat.Note(fmt.Sprintf(
+			"In %s mode pass %s for a deterministic init path when the directory is "+
+				"non-empty (or was just primed by the agent-driven onboarding pre-flow).",
+			helpformat.Flag("--no-prompt"),
+			helpformat.Flag("--from-code"),
+		)),
+		helpformat.Note("A default .agentignore file is generated to control which files are excluded "+
+			"from code-deploy ZIP packaging (uses .gitignore syntax)."),
+	)
+}
+
+// getCmdInitHelpFooter renders the Examples section. Migrated from the
+// previous cobra.Command.Example field (which has been removed) so that
+// command tokens render blue and arguments yellow, matching azd init --help.
+func getCmdInitHelpFooter(*cobra.Command) string {
+	return helpformat.Examples(map[string]string{
+		"Initialize from an agent manifest.": fmt.Sprintf("%s %s",
+			helpformat.Command("azd ai agent init -m"),
+			helpformat.Arg("[manifest path]"),
+		),
+		"Initialize from a manifest with a unique Foundry agent name.": fmt.Sprintf("%s %s %s %s",
+			helpformat.Command("azd ai agent init -m"),
+			helpformat.Arg("[manifest path]"),
+			helpformat.Flag("--agent-name"),
+			helpformat.Arg("[name]"),
+		),
+		"Initialize from local agent code with a unique Foundry agent name.": fmt.Sprintf("%s %s %s %s",
+			helpformat.Command("azd ai agent init --src"),
+			helpformat.Arg("[source dir]"),
+			helpformat.Flag("--agent-name"),
+			helpformat.Arg("[name]"),
+		),
+		"Non-interactive code deploy (CI/CD or agent-driven flows).": fmt.Sprintf(
+			"%s %s %s %s %s %s %s %s %s",
+			helpformat.Command("azd ai agent init --no-prompt --from-code"),
+			helpformat.Flag("--project-id"),
+			helpformat.Arg("[resource ID]"),
+			helpformat.Flag("--deploy-mode"),
+			helpformat.Arg("code"),
+			helpformat.Flag("--runtime"),
+			helpformat.Arg("python_3_13"),
+			helpformat.Flag("--entry-point"),
+			helpformat.Arg("app.py"),
+		),
+	})
 }
 
 func (a *InitAction) Run(ctx context.Context) error {
