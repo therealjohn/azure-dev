@@ -21,7 +21,11 @@ import (
 
 // renderRootBody returns the rendered body for `azd ai doc`: preamble
 // followed by an "Available Documentation:" section listing every
-// category with its Short description.
+// category with its Short description AND every topic nested under
+// each category. This is the comprehensive catalog view -- a single
+// invocation shows every doc topic across every group, with per-topic
+// descriptions and any References-for-<topic> sub-blocks. Mirrors the
+// shape of a `skills` catalog (one screen, all groups, all topics).
 //
 // The section is named "Available Documentation" (NOT "Available
 // Commands") because the docs extension's root cobra command has REAL
@@ -44,37 +48,80 @@ func renderRootBody(cats []DocCategory) string {
 		notes...,
 	))
 	b.WriteString(helpformat.SectionHeader("Available Documentation"))
-	b.WriteString("\n")
-	width := categoryColumnWidth(cats)
-	for _, c := range cats {
+	b.WriteString("\n\n")
+	for i, c := range cats {
+		// Category header line: "  agent  -- Foundry agents (azure.ai.agents)"
 		b.WriteString("  ")
 		b.WriteString(helpformat.Command(c.Name))
-		b.WriteString(padRight(c.Name, width))
-		b.WriteString(": ")
-		b.WriteString(c.Short)
+		b.WriteString("  -- ")
+		b.WriteString(c.DisplayName)
 		b.WriteString("\n")
+		if c.Short != "" {
+			b.WriteString("    ")
+			b.WriteString(c.Short)
+			b.WriteString("\n")
+		}
+		if len(c.Topics) > 0 {
+			b.WriteString("\n    Topics:\n")
+			width := topicColumnWidth(c.Topics)
+			for _, t := range c.Topics {
+				b.WriteString("      ")
+				b.WriteString(helpformat.Command(t.Name))
+				b.WriteString(padRight(t.Name, width))
+				b.WriteString(": ")
+				b.WriteString(t.Short)
+				b.WriteString("\n")
+			}
+		}
+		// One References block per topic that has any, inside the
+		// category's block so the reader sees them in context.
+		for _, t := range c.Topics {
+			if len(t.References) == 0 {
+				continue
+			}
+			b.WriteString("\n    ")
+			b.WriteString(helpformat.SectionHeader(fmt.Sprintf("References for `%s`", t.Name)))
+			b.WriteString("\n")
+			refWidth := referenceColumnWidth(t.References)
+			for _, r := range t.References {
+				b.WriteString("      ")
+				b.WriteString(helpformat.Command(r.Name))
+				b.WriteString(padRight(r.Name, refWidth))
+				b.WriteString(": ")
+				b.WriteString(r.Short)
+				b.WriteString("\n")
+			}
+		}
+		if i < len(cats)-1 {
+			b.WriteString("\n")
+		}
 	}
 	b.WriteString("\n")
 	return b.String()
 }
 
-// renderRootExamples returns just the styled Examples block for the
-// root catalog. Aggregates a couple of representative examples that
-// help an agent discover where to go next. Returned separately from
-// renderRootBody so it can flow through helpformat.Options.Footer.
+// renderRootExamples returns the styled Examples block for the root
+// catalog. Command tokens are wrapped in helpformat.Command so they
+// render blue; argument placeholders are wrapped in helpformat.Arg
+// (yellow). The catalog is the source of truth for the example
+// commands; the rendering layer owns the styling.
 func renderRootExamples(cats []DocCategory) string {
 	samples := map[string]string{
 		// Lexical sort: "List ..." (L) < "Print ..." (P). Titles
 		// chosen so the sorted order reads as a natural progression.
-		"List available documentation groups.": "azd ai doc",
+		"List available documentation groups.": helpformat.Command("azd ai doc"),
 	}
 	if len(cats) > 0 {
-		samples[fmt.Sprintf("List topics for the %s group.", cats[0].Name)] = fmt.Sprintf(
-			"azd ai doc %s", cats[0].Name,
+		first := cats[0]
+		samples[fmt.Sprintf("List topics for the %s group.", first.Name)] = fmt.Sprintf("%s %s",
+			helpformat.Command("azd ai doc"),
+			helpformat.Command(first.Name),
 		)
-		if len(cats[0].Topics) > 0 {
-			samples[fmt.Sprintf("Print the %s topic body.", cats[0].Topics[0].Name)] = fmt.Sprintf(
-				"azd ai doc %s %s", cats[0].Name, cats[0].Topics[0].Name,
+		if len(first.Topics) > 0 {
+			samples[fmt.Sprintf("Print the %s topic body.", first.Topics[0].Name)] = fmt.Sprintf("%s %s %s",
+				helpformat.Command("azd ai doc"),
+				helpformat.Command(first.Name),
+				helpformat.Command(first.Topics[0].Name),
 			)
 		}
 	}
@@ -134,10 +181,22 @@ func renderCatalogBody(cat DocCategory) string {
 }
 
 // renderCatalogExamples returns just the styled Examples block for one
-// category. Reads cat.Examples directly so the catalog owns the per-
-// category guidance.
+// category. Reads cat.Examples (a map of title -> bare command string)
+// and wraps each command in helpformat.Command so the output renders
+// blue tokens, matching the convention from azd init --help.
+//
+// The catalog data stores bare commands -- keeping the YAML/literal
+// source readable without ANSI escapes -- and the renderer owns the
+// styling at call time.
 func renderCatalogExamples(cat DocCategory) string {
-	return helpformat.Examples(cat.Examples)
+	if len(cat.Examples) == 0 {
+		return ""
+	}
+	styled := make(map[string]string, len(cat.Examples))
+	for title, cmd := range cat.Examples {
+		styled[title] = helpformat.Command(cmd)
+	}
+	return helpformat.Examples(styled)
 }
 
 // padRight returns the space padding needed to right-align the colon
@@ -149,18 +208,6 @@ func padRight(name string, width int) string {
 		return ""
 	}
 	return strings.Repeat(" ", width-len(name))
-}
-
-// categoryColumnWidth returns the longest category name across cats,
-// used as the right-pad target for the Available Documentation list.
-func categoryColumnWidth(cats []DocCategory) int {
-	w := 0
-	for _, c := range cats {
-		if len(c.Name) > w {
-			w = len(c.Name)
-		}
-	}
-	return w
 }
 
 // topicColumnWidth returns the longest topic name across topics, used

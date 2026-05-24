@@ -143,3 +143,49 @@ func TestRenderCatalogExamples_EmptyExamplesYieldsEmptyString(t *testing.T) {
 	got := renderCatalogExamples(cat)
 	assert.Equal(t, "", got, "no examples -> empty string (no Examples: header)")
 }
+
+// TestRenderRootExamples_StylesCommandTokens is the regression for the
+// user-reported issue that `azd ai doc` and `azd ai doc --help`
+// rendered Examples commands as plain text. With color forced on, the
+// example command bytes must include ANSI escape sequences -- otherwise
+// the catalog Examples have lost their blue command coloring.
+func TestRenderRootExamples_StylesCommandTokens(t *testing.T) {
+	withColorOn(t)
+	got := renderRootExamples(docCategories)
+	require.NotEmpty(t, got)
+	require.Contains(t, got, "\x1b[", "expected ANSI escapes around example command tokens")
+}
+
+func TestRenderCatalogExamples_StylesCommandTokens(t *testing.T) {
+	withColorOn(t)
+	cat := FindCategory("agent")
+	require.NotNil(t, cat)
+	got := renderCatalogExamples(*cat)
+	require.NotEmpty(t, got)
+	require.Contains(t, got, "\x1b[", "expected ANSI escapes around example command tokens")
+}
+
+// TestRenderRootBody_NestsTopicsUnderEachCategory pins the
+// comprehensive-catalog layout: the root view shows each category's
+// topics inline (not just the category name + short). User feedback:
+// the old single-row layout was too minimal compared to a
+// `skills`-catalog style listing.
+func TestRenderRootBody_NestsTopicsUnderEachCategory(t *testing.T) {
+	withColorOff(t)
+	got := renderRootBody(docCategories)
+	assert.Contains(t, got, "Topics:",
+		"root body must include a per-category Topics: block")
+	for _, want := range []string{"initialize", "configure", "operate", "investigate"} {
+		assert.Contains(t, got, want, "topic %q missing from root catalog", want)
+	}
+}
+
+// withColorOn is the inverse of withColorOff: forces color.NoColor=false
+// so a styling test can assert escape codes. Same parallel caveat as
+// withColorOff -- do not combine with t.Parallel.
+func withColorOn(t *testing.T) {
+	t.Helper()
+	prev := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = prev })
+}
