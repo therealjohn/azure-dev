@@ -63,7 +63,7 @@ func TestWriteBootstrapAzureYaml_WritesWhenAbsent(t *testing.T) {
 
 	require.NoError(t, writeBootstrapAzureYaml(dir))
 
-	body, err := os.ReadFile(filepath.Join(dir, bootstrapAzureYamlName))
+	body, err := os.ReadFile(filepath.Join(dir, bootstrapAzureYamlName)) //nolint:gosec
 	require.NoError(t, err)
 	assert.Contains(t, string(body), bootstrapTemplatePrefix+"@",
 		"written file should carry the bootstrap marker")
@@ -78,14 +78,14 @@ func TestWriteBootstrapAzureYaml_WritesWhenAbsent(t *testing.T) {
 func TestWriteBootstrapAzureYaml_IsNoopWhenFileExists(t *testing.T) {
 	dir := t.TempDir()
 	preexisting := "name: existing-project\n# user owned\n"
-	require.NoError(t, os.WriteFile(
+	require.NoError(t, os.WriteFile( //nolint:gosec
 		filepath.Join(dir, bootstrapAzureYamlName),
 		[]byte(preexisting), 0o644))
 
 	require.NoError(t, writeBootstrapAzureYaml(dir),
 		"O_EXCL collision must be treated as success no-op")
 
-	got, err := os.ReadFile(filepath.Join(dir, bootstrapAzureYamlName))
+	got, err := os.ReadFile(filepath.Join(dir, bootstrapAzureYamlName)) //nolint:gosec
 	require.NoError(t, err)
 	assert.Equal(t, preexisting, string(got),
 		"pre-existing azure.yaml MUST remain byte-for-byte unchanged")
@@ -98,11 +98,11 @@ func TestWriteBootstrapAzureYaml_IsNoopWhenFileExists(t *testing.T) {
 func TestWriteBootstrapAzureYaml_SanitizesUglyDirName(t *testing.T) {
 	parent := t.TempDir()
 	ugly := filepath.Join(parent, "My Cool.AI Agent")
-	require.NoError(t, os.MkdirAll(ugly, 0o755))
+	require.NoError(t, os.MkdirAll(ugly, 0o755)) //nolint:gosec
 
 	require.NoError(t, writeBootstrapAzureYaml(ugly))
 
-	body, err := os.ReadFile(filepath.Join(ugly, bootstrapAzureYamlName))
+	body, err := os.ReadFile(filepath.Join(ugly, bootstrapAzureYamlName)) //nolint:gosec
 	require.NoError(t, err)
 	// sanitizeAgentName lowercases and replaces non-[a-z0-9-] with '-'.
 	assert.Contains(t, string(body), "name: my-cool-ai-agent",
@@ -123,8 +123,8 @@ func TestWriteBootstrapAzureYaml_PropagatesNonExistErrors(t *testing.T) {
 		t.Skip("read-only directory permissions are not enforced for OpenFile on Windows")
 	}
 	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0o500))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	require.NoError(t, os.Chmod(dir, 0o500))       //nolint:gosec
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) }) //nolint:gosec
 
 	err := writeBootstrapAzureYaml(dir)
 	require.Error(t, err, "should surface permission-denied as a real error")

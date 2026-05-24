@@ -34,7 +34,7 @@ func chdirTo(t *testing.T) string {
 // Select prompt; the flag must override that.
 func TestPromptInitMode_FromCodeFlagWins(t *testing.T) {
 	dir := chdirTo(t)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.py"), []byte("x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.py"), []byte("x\n"), 0o644)) //nolint:gosec
 
 	// nil azdClient is safe here because the from-code short-circuit
 	// returns before any Prompt RPC is attempted.
@@ -62,7 +62,7 @@ func TestPromptInitMode_EmptyDirSelectsTemplate(t *testing.T) {
 func TestPromptInitMode_BootstrapOnlyInteractiveRoutesToFromCode(t *testing.T) {
 	dir := chdirTo(t)
 	stubAzureYaml(t, dir)
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".agents", "skills"), 0o755)) //nolint:gosec
 
 	var out bytes.Buffer
 	mode, err := promptInitMode(context.Background(), nil, &initFlags{}, &out)
@@ -97,7 +97,7 @@ func TestPromptInitMode_BootstrapOnlyNoPromptStaysSilent(t *testing.T) {
 // the coding agent can actually act on.
 func TestPromptInitMode_NonEmptyNonBootstrapNoPromptReturnsSuggestion(t *testing.T) {
 	dir := chdirTo(t)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.py"), []byte("x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.py"), []byte("x\n"), 0o644)) //nolint:gosec
 
 	_, err := promptInitMode(context.Background(), nil, &initFlags{noPrompt: true}, &bytes.Buffer{})
 	require.Error(t, err)
@@ -140,9 +140,9 @@ func TestPromptInitMode_PropagatesBootstrapDetectionError(t *testing.T) {
 	// Add an unreadable subdir to force a walk error inside
 	// dirIsAgentBootstrapOnly's SKILL.md probe.
 	subdir := filepath.Join(dir, "unknown-dir")
-	require.NoError(t, os.MkdirAll(subdir, 0o755))
-	require.NoError(t, os.Chmod(subdir, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(subdir, 0o755) })
+	require.NoError(t, os.MkdirAll(subdir, 0o755))    //nolint:gosec
+	require.NoError(t, os.Chmod(subdir, 0o000))       //nolint:gosec
+	t.Cleanup(func() { _ = os.Chmod(subdir, 0o755) }) //nolint:gosec
 
 	_, err := promptInitMode(context.Background(), nil, &initFlags{noPrompt: true}, &bytes.Buffer{})
 	if err == nil {
@@ -166,10 +166,10 @@ func canMakeDirUnreadable() bool {
 		return false
 	}
 	defer os.RemoveAll(dir)
-	if err := os.Chmod(dir, 0o000); err != nil {
+	if err := os.Chmod(dir, 0o000); err != nil { //nolint:gosec
 		return false
 	}
-	defer os.Chmod(dir, 0o755) //nolint:errcheck
+	defer os.Chmod(dir, 0o755) //nolint:errcheck,gosec
 	_, err = os.ReadDir(dir)
 	return err != nil
 }

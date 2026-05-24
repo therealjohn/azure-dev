@@ -49,7 +49,7 @@ const bootstrapAzureYamlName = "azure.yaml"
 //     wins. Either way the file exists and the caller can proceed.
 //
 // Returns a non-nil error for any OTHER failure (permission denied,
-// disk full, unwritable filesystem). The pre-flow treats that error as
+// disk full, read-only filesystem). The pre-flow treats that error as
 // fatal: if we cannot create the stub, the coding agent's follow-up
 // invocation will hit the unfixed "use existing code vs template" gap,
 // so we must surface the failure BEFORE printing "you're ready to go".
@@ -63,7 +63,7 @@ func writeBootstrapAzureYaml(cwd string) error {
 
 	content := renderBootstrapAzureYaml(name, version.Version)
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // path joined from cwd + fixed filename inside our control
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			// File already exists -- success no-op (case 1/2/3 above).
@@ -78,8 +78,8 @@ func writeBootstrapAzureYaml(cwd string) error {
 	// partial file in the user's project root.
 	var writeErr error
 	defer func() {
-		if cerr := f.Close(); cerr != nil && writeErr == nil {
-			writeErr = fmt.Errorf("close %s: %w", bootstrapAzureYamlName, cerr)
+		if closeErr := f.Close(); closeErr != nil && writeErr == nil {
+			writeErr = fmt.Errorf("close %s: %w", bootstrapAzureYamlName, closeErr)
 		}
 	}()
 

@@ -91,17 +91,19 @@ const (
 // from a template" (initModeTemplate). The routing order is:
 //
 //  1. flags.fromCode set -> initModeFromCode (explicit user/agent intent).
+//
 //  2. cwd is empty -> initModeTemplate (no code to use; offer templates).
+//
 //  3. cwd is "bootstrap-only" (only the pre-flow's azure.yaml stub
 //     plus housekeeping files) -> initModeFromCode silently. We pick
 //     from-code rather than template because:
 //
 //     a. InitFromCodeAction.ensureProject() correctly reuses the
-//        bootstrap azure.yaml instead of re-scaffolding the starter
-//        template, so the user's pre-flow setup is honored.
+//     bootstrap azure.yaml instead of re-scaffolding the starter
+//     template, so the user's pre-flow setup is honored.
 //     b. promptAgentTemplate() also requires interactive mode -- routing
-//        bootstrap-only -> initModeTemplate would just defer the
-//        --no-prompt failure to a later prompt (rubber-duck #1).
+//     bootstrap-only -> initModeTemplate would just defer the
+//     --no-prompt failure to a later prompt (rubber-duck #1).
 //
 //     In interactive mode we print a muted "Detected AZD AI bootstrap
 //     files; setting up a new agent." line so the user sees WHY the
@@ -242,7 +244,7 @@ var bootstrapOnlyFileWhitelist = []string{
 // definition "noise" relative to the question we're answering: "did the
 // user add agent code?".
 var bootstrapOnlyDirWhitelist = []string{
-	".git",         // also matches the .git FILE in worktrees, handled in loop
+	".git", // also matches the .git FILE in worktrees, handled in loop
 	".azure",
 	".azd",
 	".github",
@@ -319,9 +321,9 @@ func dirIsAgentBootstrapOnly(dir string) (bool, error) {
 		// azure.yaml is the load-bearing signal -- if and only if it
 		// carries the bootstrap marker AND has no services/infra/hooks.
 		if strings.EqualFold(name, bootstrapAzureYamlName) {
-			ok, perr := azureYamlIsBootstrapStub(full)
-			if perr != nil {
-				return false, perr
+			ok, parseErr := azureYamlIsBootstrapStub(full)
+			if parseErr != nil {
+				return false, parseErr
 			}
 			if !ok {
 				return false, nil
@@ -348,9 +350,9 @@ func dirIsAgentBootstrapOnly(dir string) (bool, error) {
 		if !e.IsDir() {
 			return false, nil
 		}
-		hasSkill, perr := dirContainsAzdAiSkill(full, bootstrapWalkMaxDepth)
-		if perr != nil {
-			return false, perr
+		hasSkill, walkErr := dirContainsAzdAiSkill(full, bootstrapWalkMaxDepth)
+		if walkErr != nil {
+			return false, walkErr
 		}
 		if !hasSkill {
 			return false, nil
@@ -365,12 +367,7 @@ func dirIsAgentBootstrapOnly(dir string) (bool, error) {
 // in the caller rather than an inline ToLower comparison per check.
 func nameMatchesAny(name string, list []string) bool {
 	lower := strings.ToLower(name)
-	for _, candidate := range list {
-		if lower == candidate {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, lower)
 }
 
 // symlinkResolvesUnder reports whether a symlink's resolved target sits
@@ -452,7 +449,7 @@ func azureYamlIsBootstrapStub(path string) (bool, error) {
 }
 
 // dirContainsAzdAiSkill returns true when any SKILL.md found under root
-// (up to depthLimit subdirs deep) contains the azdAiSkillMarker. This
+// (up to depthLimit subdirectories deep) contains the azdAiSkillMarker. This
 // is how we detect custom skill install paths the user supplied to the
 // pre-flow's Q3.
 func dirContainsAzdAiSkill(root string, depthLimit int) (bool, error) {

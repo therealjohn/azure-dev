@@ -19,7 +19,7 @@ import (
 func stubAzureYaml(t *testing.T, dir string) {
 	t.Helper()
 	body := renderBootstrapAzureYaml("test-project", "1.2.3")
-	require.NoError(t, os.WriteFile(
+	require.NoError(t, os.WriteFile( //nolint:gosec
 		filepath.Join(dir, bootstrapAzureYamlName), []byte(body), 0o644))
 }
 
@@ -39,10 +39,10 @@ func TestDirIsAgentBootstrapOnly_BareStub(t *testing.T) {
 func TestDirIsAgentBootstrapOnly_StubPlusHousekeeping(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("# My agent\n"), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".vscode"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\n"), 0o644))     //nolint:gosec
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("# My agent\n"), 0o644)) //nolint:gosec
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o755))                               //nolint:gosec
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".vscode"), 0o755))                            //nolint:gosec
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
 	require.NoError(t, err)
@@ -58,8 +58,8 @@ func TestDirIsAgentBootstrapOnly_StubPlusKnownSkillRoot(t *testing.T) {
 		t.Run(root, func(t *testing.T) {
 			dir := t.TempDir()
 			stubAzureYaml(t, dir)
-			require.NoError(t, os.MkdirAll(filepath.Join(dir, root, "skills", "azd-ai-skill"), 0o755))
-			require.NoError(t, os.WriteFile(
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, root, "skills", "azd-ai-skill"), 0o755)) //nolint:gosec
+			require.NoError(t, os.WriteFile(                                                           //nolint:gosec
 				filepath.Join(dir, root, "skills", "azd-ai-skill", "SKILL.md"),
 				[]byte("---\nname: AZD AI\n---\n"), 0o644))
 
@@ -77,7 +77,7 @@ func TestDirIsAgentBootstrapOnly_StubPlusKnownSkillRoot(t *testing.T) {
 func TestDirIsAgentBootstrapOnly_GitFileWorktreePointer(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"), //nolint:gosec
 		[]byte("gitdir: /tmp/somewhere/.git/worktrees/x\n"), 0o644))
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
@@ -92,8 +92,8 @@ func TestDirIsAgentBootstrapOnly_StubPlusCustomSkillDir(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
 	custom := filepath.Join(dir, ".my-tool", "skills", "azd-ai-skill")
-	require.NoError(t, os.MkdirAll(custom, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(custom, "SKILL.md"),
+	require.NoError(t, os.MkdirAll(custom, 0o755))                     //nolint:gosec
+	require.NoError(t, os.WriteFile(filepath.Join(custom, "SKILL.md"), //nolint:gosec
 		[]byte("---\nname: AZD AI\ndescription: blah\n---\n\nbody\n"), 0o644))
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
@@ -107,7 +107,7 @@ func TestDirIsAgentBootstrapOnly_StubPlusCustomSkillDir(t *testing.T) {
 func TestDirIsAgentBootstrapOnly_StrayPyFile(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.py"), []byte("print('hi')\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "app.py"), []byte("print('hi')\n"), 0o644)) //nolint:gosec
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestDirIsAgentBootstrapOnly_StrayPyFile(t *testing.T) {
 func TestDirIsAgentBootstrapOnly_StrayPackageJson(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}\n"), 0o644)) //nolint:gosec
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func TestDirIsAgentBootstrapOnly_StrayPackageJson(t *testing.T) {
 // bootstrap.
 func TestDirIsAgentBootstrapOnly_AzureYamlWithoutMarker(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "azure.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "azure.yaml"), //nolint:gosec
 		[]byte("name: real-project\nmetadata:\n  template: todo-csharp@1.0\n"), 0o644))
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
@@ -145,7 +145,7 @@ func TestDirIsAgentBootstrapOnly_AzureYamlWithoutMarker(t *testing.T) {
 // stub marker is meaningless and the dir is a real project.
 func TestDirIsAgentBootstrapOnly_AzureYamlWithMarkerButServices(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "azure.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "azure.yaml"), //nolint:gosec
 		[]byte("name: x\nmetadata:\n  template: azd-ai-bootstrap@1.2.3\nservices:\n  api:\n    host: appservice\n"),
 		0o644))
 
@@ -158,7 +158,7 @@ func TestDirIsAgentBootstrapOnly_AzureYamlWithMarkerButServices(t *testing.T) {
 // no-hooks half of the no-services-or-infra-or-hooks constraint.
 func TestDirIsAgentBootstrapOnly_AzureYamlWithMarkerButHooks(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "azure.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "azure.yaml"), //nolint:gosec
 		[]byte("name: x\nmetadata:\n  template: azd-ai-bootstrap@1.2.3\nhooks:\n  predeploy:\n    posix: {run: echo}\n"),
 		0o644))
 
@@ -174,8 +174,8 @@ func TestDirIsAgentBootstrapOnly_UnknownTopLevelDir(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
 	src := filepath.Join(dir, "src")
-	require.NoError(t, os.MkdirAll(src, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(src, "main.py"), []byte("x = 1\n"), 0o644))
+	require.NoError(t, os.MkdirAll(src, 0o755))                                               //nolint:gosec
+	require.NoError(t, os.WriteFile(filepath.Join(src, "main.py"), []byte("x = 1\n"), 0o644)) //nolint:gosec
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
 	require.NoError(t, err)
@@ -198,8 +198,8 @@ func TestDirIsAgentBootstrapOnly_EmptyDirReturnsFalse(t *testing.T) {
 func TestDirIsAgentBootstrapOnly_CaseInsensitiveWhitelist(t *testing.T) {
 	dir := t.TempDir()
 	stubAzureYaml(t, dir)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Readme.MD"), []byte("# r\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "LICENSE"), []byte("mit\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Readme.MD"), []byte("# r\n"), 0o644)) //nolint:gosec
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "LICENSE"), []byte("mit\n"), 0o644))   //nolint:gosec
 
 	ok, err := dirIsAgentBootstrapOnly(dir)
 	require.NoError(t, err)
@@ -214,8 +214,8 @@ func TestDirIsAgentBootstrapOnly_PropagatesReadDirErrors(t *testing.T) {
 		t.Skip("chmod-based unreadable directory trick is not portable on Windows")
 	}
 	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	require.NoError(t, os.Chmod(dir, 0o000))       //nolint:gosec
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) }) //nolint:gosec
 
 	_, err := dirIsAgentBootstrapOnly(dir)
 	require.Error(t, err, "EACCES on the target dir must be propagated, not coerced to false")
@@ -230,10 +230,10 @@ func TestDirIsAgentBootstrapOnly_SymlinkOutsideRootRejected(t *testing.T) {
 	}
 	parent := t.TempDir()
 	outside := filepath.Join(parent, "outside")
-	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755)) //nolint:gosec
 
 	dir := filepath.Join(parent, "project")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.MkdirAll(dir, 0o755)) //nolint:gosec
 	stubAzureYaml(t, dir)
 	require.NoError(t, os.Symlink(outside, filepath.Join(dir, ".github")))
 
