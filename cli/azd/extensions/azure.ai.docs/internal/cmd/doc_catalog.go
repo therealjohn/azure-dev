@@ -96,7 +96,13 @@ var docCategories = []DocCategory{
 	{
 		Name:        "agent",
 		DisplayName: "Foundry agents (azure.ai.agents)",
-		Short:       "Foundry agents -- create, configure, operate, investigate.",
+		// Short is the one-liner shown next to the category name in
+		// `azd ai doc`'s Available Documentation block. Include the
+		// extension reference inline (parenthetically) so the
+		// renderer can drop a separate DisplayName line without
+		// losing the extension provenance.
+		Short: "Create, configure, operate, and investigate Foundry agents " +
+			"(azure.ai.agents).",
 		Preamble: []string{
 			"Each topic below is a self-contained contract you can read directly to drive the matching " +
 				"`azd ai agent` commands.",

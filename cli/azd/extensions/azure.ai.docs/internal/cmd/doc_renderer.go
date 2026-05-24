@@ -50,17 +50,18 @@ func renderRootBody(cats []DocCategory) string {
 	b.WriteString(helpformat.SectionHeader("Available Documentation"))
 	b.WriteString("\n\n")
 	for i, c := range cats {
-		// Category header line: "  agent  -- Foundry agents (azure.ai.agents)"
+		// Single header line per category: "  agent  -- <Short description>".
+		// We render only Short here -- DisplayName ("Foundry agents
+		// (azure.ai.agents)") was previously printed on a separate
+		// indented line below, but it overlapped redundantly with
+		// Short and added a visual gap that broke the flow. Short
+		// owns the per-category one-liner and is authored to include
+		// any extension reference inline (see docCategories).
 		b.WriteString("  ")
 		b.WriteString(helpformat.Command(c.Name))
 		b.WriteString("  -- ")
-		b.WriteString(c.DisplayName)
+		b.WriteString(c.Short)
 		b.WriteString("\n")
-		if c.Short != "" {
-			b.WriteString("    ")
-			b.WriteString(c.Short)
-			b.WriteString("\n")
-		}
 		if len(c.Topics) > 0 {
 			b.WriteString("\n    Topics:\n")
 			width := topicColumnWidth(c.Topics)
