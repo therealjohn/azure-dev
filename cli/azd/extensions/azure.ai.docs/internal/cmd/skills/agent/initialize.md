@@ -123,17 +123,40 @@ exit code.
 
 ## Step 3a -- Initialize a new agent project
 
-Run from the directory where you want the project files written. There
-is NO `--template` flag -- `azd ai agent init` chooses its source via
-one of three mutually exclusive paths:
+First, decide which path you are on. This decision drives every remaining
+flag.
 
-| Source                       | Flag                               | When to use                                       |
-| ---------------------------- | ---------------------------------- | ------------------------------------------------- |
-| Curated sample manifest      | `-m <manifest-url-or-path>`        | You picked an entry from `azd ai agent sample list` |
-| Local code in cwd            | `--from-code`                      | The directory already contains your agent source  |
-| Interactive picker           | (no flag, requires TTY)            | Driving an interactive user, NOT for `--no-prompt` |
+| User is ... | Signal                                                              | Source flag                  |
+| ----------- | ------------------------------------------------------------------- | ---------------------------- |
+| Greenfield  | Empty workspace, only a bootstrap stub, or wants a starter          | `-m <manifestUrl>` (default) |
+| Brownfield  | The cwd already contains hand-written agent source the user owns    | `--from-code`                |
 
-The non-interactive, agent-driven invocation:
+The interactive picker (no `-m`, no `--from-code`) is for human-driven
+flows only. NEVER use it under `--no-prompt`.
+
+### Greenfield: start from a curated sample (the common case)
+
+Run `azd ai agent sample list` first (see the `samples` topic) to fetch a
+`manifestUrl` from the curated catalog. Do NOT guess or hand-author a
+manifest URL.
+
+```bash
+# 1. Discover a manifest URL
+azd ai agent sample list --featured-only --language python --output json
+
+# 2. Init with the picked manifestUrl
+azd ai agent init --no-prompt \
+  --project-id "<projectResourceId>" \
+  -m "<manifestUrl-from-sample-list>"
+```
+
+`-m` accepts a URL or a local path; the value comes from the `manifestUrl`
+field of `azd ai agent sample list --output json`.
+
+### Brownfield: existing agent source (rare)
+
+ONLY use `--from-code` when the workspace already contains hand-written
+agent source the user wants lifted into a hosted Foundry agent.
 
 ```bash
 azd ai agent init --no-prompt \
@@ -144,24 +167,25 @@ azd ai agent init --no-prompt \
   --entry-point app.py
 ```
 
-OR, when starting from a curated sample:
-
-```bash
-azd ai agent init --no-prompt \
-  --project-id "<projectResourceId>" \
-  -m "https://raw.githubusercontent.com/.../agent.yaml"
-```
+`--runtime` and `--entry-point` are required with
+`--deploy-mode code --no-prompt`. `--deploy-mode container` (the default)
+builds from `Dockerfile`.
 
 Full flag set:
 
-- `-m, --manifest <url-or-path>` -- agent manifest source. Mutually
-  exclusive with `--from-code`. Get candidates from
+- `-m, --manifest <url-or-path>` -- agent manifest source (greenfield
+  default). Mutually exclusive with `--from-code`. Get candidates from
   `azd ai agent sample list --output json` (the `manifestUrl` field).
-- `--from-code` -- use the code in cwd as the agent source. Mutually
-  exclusive with `-m`. REQUIRED in `--no-prompt` when no manifest is
-  passed.
+- `--from-code` -- use the code in cwd as the agent source.
+  BROWNFIELD ONLY -- requires hand-written agent source already in the
+  workspace. Mutually exclusive with `-m`. Do NOT pass this just because
+  `--no-prompt` complains about a missing source; pick a sample with
+  `-m` instead.
 - `-p, --project-id <resourceId>` -- Foundry project ARM ID. Required
-  in `--no-prompt`. If the human has not given you one, STOP and ask.
+  in `--no-prompt`. If the human has not given you one, STOP and ask
+  them: "Open the Foundry portal at https://ai.azure.com -> Operate ->
+  Admin -> select your project -> Copy the Resource ID." Do NOT shell
+  out to `az cognitiveservices ...` to discover it.
 - `--agent-name <name>` -- Foundry agent name written to `agent.yaml`.
   Reusing a name creates a new version of the existing agent.
 - `--model <name>` -- model id (e.g. `gpt-4.1-mini`). Defaults to
@@ -204,14 +228,9 @@ ON-DISK shape of `agent.yaml`, see the `extend` topic.
 
 ## Step 3b -- The workspace already has azure.yaml but no agent service
 
-The `--help` preamble of `azd ai agent` will tell you this case. Use
-the same `init` invocation as Step 3a. The new service is appended to
+The `--help` preamble of `azd ai agent` will tell you this case. Use the
+same init invocation as Step 3a. The new service is appended to
 `azure.yaml`.
-
-If the directory contains the AZD AI bootstrap stub
-(`metadata.template: azd-ai-bootstrap@*`), `azd ai agent init` detects
-it and routes through the from-code path automatically -- you can omit
-`--from-code` in that one case.
 
 ----------------------------------------------------------------------
 

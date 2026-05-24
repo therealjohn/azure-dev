@@ -1,31 +1,32 @@
 ---
-short: Discover starter samples and templates before running init.
+short: The default starting point for any new agent project.
 order: 5
 ---
-# Samples: discover a starting point before scaffolding
+# Samples: the default starting point for `azd ai agent init`
 
 Audience: an AI coding assistant choosing a starting point for a new agent
 project on the user's behalf. Every command here is read-only and safe to
 script.
 
-The catalog this command surfaces is the SAME catalog the interactive
-`azd ai agent init` picker uses. Each entry tells you exactly which command
-to run next, so you do not need to compose `--manifest` URLs by hand.
+This catalog is the SAME one the interactive `azd ai agent init` picker
+uses. Each entry tells you exactly which command to run next, so you do
+not need to compose `--manifest` URLs by hand.
 
 ----------------------------------------------------------------------
 
-## When to use samples (vs. other init paths)
+## When to use samples
 
-Three ways to start a project:
+Two scenarios. The first covers almost every "create an agent" request.
 
-| Source                       | How to find it             | When to use                                            |
-| ---------------------------- | -------------------------- | ------------------------------------------------------ |
-| Curated sample (manifest)    | `azd ai agent sample list` | Fastest path; user has no opinion on starting code     |
-| Curated template (full repo) | `azd ai agent sample list` | User wants an entire azd template scaffolded           |
-| Local code in cwd            | `--from-code` flag         | Repo already contains the user's agent source          |
+| Scenario   | Signal                                                              | What to do                                                                  |
+| ---------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Greenfield | Empty workspace, only a bootstrap stub, or the user wants a starter | `azd ai agent sample list`, then `azd ai agent init -m <manifestUrl>`       |
+| Brownfield | The cwd already contains the user's hand-written agent source code  | Skip samples. Use `azd ai agent init --from-code` (see `initialize` topic)  |
 
-If the human asked for "something to get started", default to the sample
-list rather than guessing a manifest URL.
+If you are unsure -- e.g. the human said "create a hosted Python agent"
+without showing you existing source -- it's greenfield. Default to
+`sample list`. NEVER guess a manifest URL by hand, and NEVER fall back to
+`--from-code` just because `--no-prompt` requires a source flag.
 
 ----------------------------------------------------------------------
 
@@ -100,13 +101,13 @@ unknown fields.
 
 ## Pick a sample and scaffold
 
-Single-shot, agent-friendly flow:
+Single-shot greenfield flow:
 
 ```bash
-# 1. Get the catalog
+# 1. Get the catalog (filter by language if known)
 azd ai agent sample list --featured-only --language python --output json
 
-# 2. Pick an entry, then run its initCommand
+# 2. Pick an entry, then init with its manifestUrl
 azd ai agent init -m "<manifestUrl from step 1>" --no-prompt \
   --project-id "<projectResourceId>"
 ```
@@ -114,12 +115,13 @@ azd ai agent init -m "<manifestUrl from step 1>" --no-prompt \
 If the human has not given you a `--project-id`, stop and ask -- do not
 guess. See the `initialize` topic for the full init contract.
 
-For `type: "azd"` entries, the flow is two-step:
+For `type: "azd"` entries (full repo scaffolds), the flow is two-step:
 
 ```bash
 azd init -t "<repoUrl>"
 cd <scaffolded-directory>
-azd ai agent init --from-code   # or use the manifest the template ships
+# Most azd templates ship an agent.yaml manifest -- prefer it:
+azd ai agent init -m "<manifest-shipped-by-template>"
 ```
 
 ----------------------------------------------------------------------
