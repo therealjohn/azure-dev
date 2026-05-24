@@ -4,6 +4,8 @@
 package cmd
 
 import (
+	"azure.ai.docs/internal/helpformat"
+
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/spf13/cobra"
 )
@@ -20,19 +22,21 @@ Each sibling ai.* extension owns its own embedded markdown topics; this
 extension routes topic requests to the right extension and renders the
 result. The shape mirrors a familiar "skills" surface: top-level lists the
 covered ai.* extensions, the next level lists topics for an extension,
-and the leaf prints a single topic.
+and the leaf prints a single topic.`,
+	})
 
-Examples:
-
-  # List ai.* extensions with docs
+	// Examples migrated into a styled Examples block (auto-promoted by
+	// helpformat.InstallAll below from cmd.Example). The inline
+	// Examples: section previously embedded in Long is removed so the
+	// help output has exactly one Examples section, not two.
+	rootCmd.Example = `  # List ai.* extensions with docs
   azd ai doc
 
   # List topics for the agents extension
   azd ai doc agent
 
   # Print one topic's markdown
-  azd ai doc agent initialize`,
-	})
+  azd ai doc agent initialize`
 
 	// The root command itself renders the top-level index when invoked
 	// with no subcommand. Matches a familiar `skills` catalog shape so
@@ -52,6 +56,16 @@ Examples:
 	rootCmd.AddCommand(newSkillsCommand(extCtx))
 	rootCmd.AddCommand(newVersionCommand(&extCtx.OutputFormat))
 	rootCmd.AddCommand(newMetadataCommand(rootCmd))
+
+	// docs root has no custom HelpFunc (unlike the agents root which
+	// brackets UsageString with a banner + env-vars + skills sections),
+	// so it can take the full Install treatment: HelpTemplate plus
+	// UsageTemplate, plus auto-migration of cmd.Example into a styled
+	// Examples block. Install runs FIRST so the root's HelpTemplate is
+	// set; InstallAll then walks subcommands (agent, skills+install,
+	// version, metadata) and skips the already-installed root.
+	helpformat.Install(rootCmd, helpformat.Options{})
+	helpformat.InstallAll(rootCmd)
 
 	return rootCmd
 }
