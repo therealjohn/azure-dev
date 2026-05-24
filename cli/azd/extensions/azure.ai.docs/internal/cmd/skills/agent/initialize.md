@@ -106,41 +106,95 @@ exit code.
 
 ## Step 3a -- Initialize a new agent project
 
-Run from the directory where you want the project files written.
+Run from the directory where you want the project files written. There
+is NO `--template` flag -- `azd ai agent init` chooses its source via
+one of three mutually exclusive paths:
+
+| Source                       | Flag                               | When to use                                       |
+| ---------------------------- | ---------------------------------- | ------------------------------------------------- |
+| Curated sample manifest      | `-m <manifest-url-or-path>`        | You picked an entry from `azd ai agent sample list` |
+| Local code in cwd            | `--from-code`                      | The directory already contains your agent source  |
+| Interactive picker           | (no flag, requires TTY)            | Driving an interactive user, NOT for `--no-prompt` |
+
+The non-interactive, agent-driven invocation:
 
 ```bash
-azd ai agent init --no-prompt --template <template-name>
+azd ai agent init --no-prompt \
+  --project-id "<projectResourceId>" \
+  --from-code \
+  --deploy-mode code \
+  --runtime python_3_13 \
+  --entry-point app.py
 ```
 
-Common flags:
+OR, when starting from a curated sample:
 
-- `--template <name>` -- skips the interactive picker. Use
-  `azd ai agent sample list --output json` to enumerate templates.
+```bash
+azd ai agent init --no-prompt \
+  --project-id "<projectResourceId>" \
+  -m "https://raw.githubusercontent.com/.../agent.yaml"
+```
+
+Full flag set:
+
+- `-m, --manifest <url-or-path>` -- agent manifest source. Mutually
+  exclusive with `--from-code`. Get candidates from
+  `azd ai agent sample list --output json` (the `manifestUrl` field).
+- `--from-code` -- use the code in cwd as the agent source. Mutually
+  exclusive with `-m`. REQUIRED in `--no-prompt` when no manifest is
+  passed.
+- `-p, --project-id <resourceId>` -- Foundry project ARM ID. Required
+  in `--no-prompt`. If the human has not given you one, STOP and ask.
+- `--agent-name <name>` -- Foundry agent name written to `agent.yaml`.
+  Reusing a name creates a new version of the existing agent.
+- `--model <name>` -- model id (e.g. `gpt-4.1-mini`). Defaults to
+  `gpt-4.1-mini`. Mutually exclusive with `--model-deployment`
+  (`--model-deployment` wins if both are given).
+- `-d, --model-deployment <name>` -- name of an existing model
+  deployment on the Foundry project. Only valid when paired with
+  `--project-id`.
+- `--deploy-mode container|code` -- defaults to `container` in
+  `--no-prompt`. `container` builds from `Dockerfile`; `code` ZIPs the
+  source and Foundry builds the runtime.
+- `--runtime <id>` -- e.g. `python_3_13`, `python_3_14`, `dotnet_10`,
+  `node_22`. REQUIRED with `--deploy-mode code --no-prompt`.
+- `--entry-point <file>` -- e.g. `app.py`, `MyAgent.dll`,
+  `dist/index.js`. REQUIRED with `--deploy-mode code --no-prompt`.
+- `--dep-resolution remote_build|bundled` -- defaults to
+  `remote_build`. Only relevant for code deploy.
+- `--protocol <name>` (repeatable) -- e.g. `responses`, `invocations`.
+- `-s, --src <dir>` -- where to download the agent definition (defaults
+  to `src/<agent-id>`).
+- `--force` -- required together with `--no-prompt` when init would
+  otherwise need confirmation (e.g. an input manifest already lives
+  inside the generated `src` tree).
 - `--no-prompt` -- refuses interactive prompts; flags must supply every
   required value, otherwise the command emits a structured
   `validation` error that names the missing flag.
-- `--output json` -- machine-readable progress (when supported).
+- `-o, --output json` -- machine-readable progress (when supported).
 
 Init writes files into the working directory. There is no confirmation
 envelope on init -- it's a non-destructive create. Files written:
 
 - `azure.yaml` (or appends a new ai.agent service to an existing one)
 - `<service-dir>/agent.yaml`
-- `<service-dir>/skills/...` (optional)
+- `<service-dir>/.agentignore` (code-deploy only; controls ZIP packaging)
 
-After init, re-run Step 1 + Step 2 to confirm the new state.
+After init, re-run Step 1 + Step 2 to confirm the new state. For the
+ON-DISK shape of `agent.yaml`, see the `extend` topic.
 
 ----------------------------------------------------------------------
 
 ## Step 3b -- The workspace already has azure.yaml but no agent service
 
-The `--help` preamble of `azd ai agent` will tell you this case. Run:
+The `--help` preamble of `azd ai agent` will tell you this case. Use
+the same `init` invocation as Step 3a. The new service is appended to
+`azure.yaml`.
 
-```bash
-azd ai agent init --no-prompt --template <template-name>
-```
-
-The new service is appended to azure.yaml.
+If the directory contains the AZD AI bootstrap stub
+(`metadata.template: azd-ai-bootstrap@*`), `azd ai agent init` detects
+it and routes through the from-code path automatically -- you can omit
+`--from-code` in that one case.
 
 ----------------------------------------------------------------------
 
@@ -154,7 +208,8 @@ azd provision --no-prompt
 ```
 
 After provision succeeds, re-run Step 1; `projectEndpoint` should
-populate.
+populate. Full deploy lifecycle (provision + deploy + verify) lives in
+the `deploy` topic.
 
 ----------------------------------------------------------------------
 
@@ -165,8 +220,9 @@ azd deploy --no-prompt
 ```
 
 After deploy succeeds, `azd ai agent show --output json` will return the
-agent record (Step 2's "active" shape) and the `configure` /
-`investigate` / `operate` skills become applicable.
+agent record (Step 2's "active" shape). At that point the `develop`,
+`configure`, `extend`, `evaluate`, `operate`, and `investigate` topics
+all become applicable.
 
 ----------------------------------------------------------------------
 

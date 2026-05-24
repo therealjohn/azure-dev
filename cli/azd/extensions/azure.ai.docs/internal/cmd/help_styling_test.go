@@ -60,7 +60,7 @@ func TestDocRootHelp_StyledSections(t *testing.T) {
 	assert.Contains(t, out, "Examples:")
 	assert.Contains(t, out, "List available documentation groups.",
 		"first catalog example title missing")
-	assert.Contains(t, out, "Print the initialize topic body.",
+	assert.Contains(t, out, "Print the samples topic body.",
 		"third catalog example title missing")
 
 	// Cobra's Available Commands listing should include the 3 visible

@@ -7,6 +7,15 @@ words:
   - myteam
   - myproj
   - sess
+  # AgentSchema connection categories referenced in shipped topic markdown
+  - Qdrant
+  # Filenames + tool names referenced in shipped topic markdown
+  - agentignore
+  - mypy
+  # Tool description term used in shipped extend topic body
+  - Sandboxed
+  # SKILL.md description term
+  - scriptable
 overrides:
   - filename: internal/cmd/doc_catalog.go
     words:

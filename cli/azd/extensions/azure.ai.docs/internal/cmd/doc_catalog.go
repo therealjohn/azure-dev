@@ -113,8 +113,15 @@ var docCategories = []DocCategory{
 			// helpformat.Examples yields a readable sequence:
 			// "List ..." (L) sorts before "Print ..." (P).
 			"List topics for the agents extension.": "azd ai doc agent",
+			"Print the samples topic.":              "azd ai doc agent samples",
 			"Print the initialize topic.":           "azd ai doc agent initialize",
+			"Print the develop topic.":              "azd ai doc agent develop",
 			"Print the configure topic.":            "azd ai doc agent configure",
+			"Print the extend topic.":               "azd ai doc agent extend",
+			"Print the deploy topic.":               "azd ai doc agent deploy",
+			"Print the evaluate topic.":             "azd ai doc agent evaluate",
+			"Print the operate topic.":              "azd ai doc agent operate",
+			"Print the investigate topic.":          "azd ai doc agent investigate",
 		},
 	},
 }

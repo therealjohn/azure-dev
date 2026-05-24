@@ -38,7 +38,7 @@ func TestDocCategories_HasAgentEntry(t *testing.T) {
 		"agent entry must be present")
 }
 
-func TestSkillsFS_HasFourAgentTopics(t *testing.T) {
+func TestSkillsFS_HasAllAgentTopics(t *testing.T) {
 	// Pins the topic set so a future drop or rename is a deliberate test
 	// update -- topic names are the wire contract callers rely on.
 	topics, err := loadCategoryTopics("agent")
@@ -48,10 +48,15 @@ func TestSkillsFS_HasFourAgentTopics(t *testing.T) {
 		got = append(got, top.Name)
 	}
 	assert.ElementsMatch(t, []string{
-		"configure",
+		"samples",
 		"initialize",
-		"investigate",
+		"develop",
+		"configure",
+		"extend",
+		"deploy",
+		"evaluate",
 		"operate",
+		"investigate",
 	}, got)
 }
 

@@ -22,6 +22,12 @@ variables.
 Foundry account. Re-deploys after editing the file create another version
 (versions are immutable).
 
+For the FULL on-disk shape (every supported field, tool kind, connection
+category, parameters block, round-trip semantics), see the `extend`
+topic. This topic focuses on the operational surface around the
+manifest: connections, file uploads, endpoint patches, eval init, env
+vars.
+
 ----------------------------------------------------------------------
 
 ## Connection management
@@ -48,22 +54,70 @@ Returns the full record including credentials when allowed.
 
 ### Create / update / delete connections
 
-`connection create`, `connection update`, and `connection delete` live in
-a separate package and do NOT yet integrate with the confirmation
-envelope. Existing semantics:
+`connection create`, `connection update`, and `connection delete` live
+in a separate package and do NOT yet integrate with the structured
+confirmation envelope (the envelope's `confirmation_required` JSON
+shape used elsewhere). They have a simpler `--force` flag for
+non-interactive use.
 
 ```bash
+# Create (or upsert with --force when the connection already exists)
 azd ai agent connection create my-search \
-  --kind cognitive-search --target https://my-search.search.windows.net/ \
-  --auth-type api-key --key "<key>"
+  --kind cognitive-search \
+  --target https://my-search.search.windows.net/ \
+  --auth-type api-key \
+  --key "<key>"
+
+# OAuth2 connection
+azd ai agent connection create my-mcp \
+  --kind remote-tool \
+  --target https://api.example.com/mcp \
+  --auth-type oauth2 \
+  --client-id "<id>" \
+  --client-secret "<secret>"
+
+# Custom-keys auth (multiple key=value pairs)
+azd ai agent connection create my-svc \
+  --kind remote-tool \
+  --target https://api.example.com \
+  --auth-type custom-keys \
+  --custom-key apiKey=abc \
+  --custom-key region=eastus \
+  --metadata environment=prod
 
 azd ai agent connection update my-search --target https://my-search-2.search.windows.net/
-
-azd ai agent connection delete my-search
+azd ai agent connection delete my-search --force
 ```
 
+Flag reference:
+
+- `--kind <kind>` -- connection kind: `remote-tool`, `remote-a2a`,
+  `cognitive-search`, etc. Free-form -- matches the `category:` values
+  used in `agent.yaml` (lowercased / hyphenated). See `extend` for the
+  full category list.
+- `--target <url>` -- target endpoint URL or ARM resource ID.
+- `--auth-type <type>` -- one of `api-key`, `custom-keys`, `none`,
+  `oauth2`, `user-entra-token`, `project-managed-identity`,
+  `agentic-identity`.
+- `--key <value>` -- API key (for `api-key` auth).
+- `--custom-key key=value` (repeatable) -- multiple custom key/value
+  pairs (for `custom-keys` auth).
+- `--client-id <id>` / `--client-secret <secret>` -- OAuth2 client
+  credentials (required for `oauth2` auth).
+- `--audience <value>` -- token audience for `user-entra-token` and
+  `agentic-identity` auth.
+- `--metadata key=value` (repeatable) -- additional metadata sent to
+  the Foundry connection record.
+- `--force` -- on `create`, upsert if the connection already exists;
+  on `delete`, skip the y/n prompt in non-interactive mode.
+
+Cross-link: to declare connections that should be CREATED at
+`azd provision` time (via Bicep), put them in `agent.yaml`'s
+`resources:` block. See the `extend` topic for that shape.
+
 When running in agent mode, prefer the explicit per-flag form -- the
-connection commands do not yet emit `confirmation_required` envelopes.
+connection commands do not yet emit `confirmation_required` envelopes,
+so the human's consent is gathered out-of-band (you ask, they reply).
 
 ----------------------------------------------------------------------
 
@@ -105,7 +159,10 @@ human and re-run the `confirmCommand`.
 
 ## Eval configuration
 
-The eval workflow has its own configure surface:
+The eval `init` command lives here because it SHAPES the eval suite
+(generates `eval.yaml`, dataset, evaluator definitions). The end-to-end
+eval lifecycle -- init -> run -> show -> update -> re-run -- lives in
+the `evaluate` topic.
 
 ```bash
 # Generate eval.yaml + dataset + evaluator (preview first)
@@ -119,9 +176,9 @@ azd ai agent eval show --output json
 azd ai agent eval list --output json
 ```
 
-`eval init` runs billed generation jobs and is gated by the confirmation
-envelope. See the `operate` topic for `eval run` (the billed execution
-step).
+`eval init` runs billed generation jobs and is gated by the
+confirmation envelope. See `evaluate` for the full flag set and
+`operate` for `eval run` (the billed execution step).
 
 ----------------------------------------------------------------------
 

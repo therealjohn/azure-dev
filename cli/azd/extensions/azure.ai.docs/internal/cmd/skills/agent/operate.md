@@ -1,6 +1,6 @@
 ---
 short: Run write commands, billed jobs, and destructive operations safely.
-order: 30
+order: 40
 ---
 # Operate: write commands, billed jobs, destructive ops
 
@@ -59,13 +59,43 @@ azd ai agent invoke "Hello!" --dry-run
 # Invoke after confirmation
 azd ai agent invoke "Hello!" --force
 
-# Local invocation -- NOT gated (no billing)
+# Local invocation -- NOT gated (no billing). See `develop` for the full local-dev flow.
 azd ai agent invoke "Hello!" --local
 ```
 
 Invoking remote agents is a billed API call, so the envelope appears
 even though it is technically idempotent. `--local` invocations skip
 the gate.
+
+Useful flags (full surface):
+
+- `--agent-endpoint <url>` -- explicit deployed agent endpoint
+  (overrides project / env detection). Use the URL from
+  `azd ai agent show --output json`. Useful for invoking from a
+  directory that has no azd project.
+- `-p, --protocol responses|invocations` -- wire format. Defaults to
+  `responses`.
+- `-f, --input-file <path>` -- send the file contents as the request
+  body instead of a positional message. Pairs with `--protocol
+  invocations` for structured payloads.
+- `-s, --session-id <id>` -- explicit session id override. Default:
+  reuses the last invoke session for this agent.
+- `--conversation-id <id>` -- explicit conversation id override.
+- `--new-session` -- force a fresh session (discard the saved one).
+- `--new-conversation` -- force a fresh conversation.
+- `--version <n>` -- invoke a specific deployed agent version
+  (creates / reuses a session backed by that version). REJECTED with
+  `--local`.
+- `-t, --timeout <seconds>` -- per-request timeout (0 = no timeout).
+- `--user-isolation-key <value>` / `--chat-isolation-key <value>` --
+  required for agents configured with header-based isolation.
+- `--port <n>` -- used with `--local` when `azd ai agent run` is on a
+  non-default port.
+
+Sessions are persisted per-agent: consecutive invokes reuse the same
+session automatically. Pass `--new-session` to reset. Named-agent
+invocation against `--local` is REJECTED -- the local server runs one
+agent at a time.
 
 ----------------------------------------------------------------------
 
@@ -74,6 +104,10 @@ the gate.
 ```bash
 # Upload (non-destructive create -- NOT yet gated by the envelope)
 azd ai agent files upload ./data/input.csv
+azd ai agent files upload ./input.csv --target-path /data/input.csv
+
+# Create a directory (non-destructive create -- NOT gated)
+azd ai agent files mkdir /data/output
 
 # Delete (destructive -- gated)
 azd ai agent files delete /data/old-file.csv --dry-run
@@ -84,7 +118,8 @@ azd ai agent files delete /data/temp --recursive --force
 ```
 
 Use `azd ai agent files list --output json` (from the `investigate`
-topic) to verify before deleting.
+topic) to verify before deleting. `files download` and `files stat`
+are read-only and also live in `investigate`.
 
 ----------------------------------------------------------------------
 
@@ -103,6 +138,10 @@ azd ai agent sessions update <session-id> --metadata key=value
 ----------------------------------------------------------------------
 
 ## Eval runs (billed)
+
+The full eval lifecycle (init -> run -> show -> update -> re-run)
+lives in the `evaluate` topic. This section covers the WRITE side
+that gates each step.
 
 ```bash
 # Generate eval suite (billed dataset + evaluator generation jobs)

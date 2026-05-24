@@ -1,6 +1,6 @@
 ---
 short: Inspect agent state, sessions, evals, and optimizations.
-order: 40
+order: 45
 ---
 # Investigate: inspect agent state, sessions, evals, and optimizations
 
@@ -76,9 +76,17 @@ formatter and consume the raw SSE.
 azd ai agent files list --output json
 azd ai agent files show <remote-path> --output json
 azd ai agent files stat <remote-path> --output json
+
+# Download to a local path (defaults to the remote basename in cwd)
+azd ai agent files download <remote-path>
+azd ai agent files download <remote-path> --target-path ./local.csv
 ```
 
-Delete and upload are mutations -- see the `operate` topic.
+`files list` and `files show` return JSON listings. `files stat` returns
+a single-file metadata record (size, mtime, content type). `files
+download` writes the file to disk -- read-only over the agent state.
+
+Upload, mkdir, and delete are mutations -- see the `operate` topic.
 
 ----------------------------------------------------------------------
 

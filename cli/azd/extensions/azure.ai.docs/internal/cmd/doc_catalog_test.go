@@ -143,7 +143,7 @@ func TestStripFrontMatter_PreservesBodyByteForByte(t *testing.T) {
 }
 
 // TestLoadCategoryTopics_ReadsAgentCategoryFromEmbeddedFS is a smoke
-// test that the loader actually returns the 4 shipped agent topics.
+// test that the loader actually returns the shipped agent topics.
 func TestLoadCategoryTopics_ReadsAgentCategoryFromEmbeddedFS(t *testing.T) {
 	t.Parallel()
 	topics, err := loadCategoryTopics("agent")
@@ -153,7 +153,10 @@ func TestLoadCategoryTopics_ReadsAgentCategoryFromEmbeddedFS(t *testing.T) {
 		names = append(names, top.Name)
 	}
 	// Ordering asserted in a separate test; here just check the set.
-	for _, want := range []string{"initialize", "configure", "operate", "investigate"} {
+	for _, want := range []string{
+		"samples", "initialize", "develop", "configure", "extend",
+		"deploy", "evaluate", "operate", "investigate",
+	} {
 		assert.True(t, contains(names, want), "missing topic %q (got %v)", want, names)
 	}
 }
@@ -162,11 +165,18 @@ func TestLoadCategoryTopics_SortsByOrderThenName(t *testing.T) {
 	t.Parallel()
 	topics, err := loadCategoryTopics("agent")
 	require.NoError(t, err)
-	require.Len(t, topics, 4)
-	// Workflow order (Decision #2): initialize=10, configure=20,
-	// operate=30, investigate=40.
-	assert.Equal(t, []string{"initialize", "configure", "operate", "investigate"},
-		[]string{topics[0].Name, topics[1].Name, topics[2].Name, topics[3].Name},
+	require.Len(t, topics, 9)
+	// Workflow order: samples=5, initialize=10, develop=15, configure=20,
+	// extend=25, deploy=30, evaluate=35, operate=40, investigate=45.
+	want := []string{
+		"samples", "initialize", "develop", "configure", "extend",
+		"deploy", "evaluate", "operate", "investigate",
+	}
+	got := make([]string, len(topics))
+	for i, top := range topics {
+		got[i] = top.Name
+	}
+	assert.Equal(t, want, got,
 		"topics must follow workflow order from front-matter `order` field")
 }
 
