@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"azureaiagent/internal/helpformat"
 	"azureaiagent/internal/tools"
 
 	"github.com/fatih/color"
@@ -24,17 +25,25 @@ func newMcpCommand() *cobra.Command {
 
 	mcpCmd.AddCommand(newMcpStartCommand())
 
+	// Install styled --help on the parent after AddCommand so the
+	// Available Commands listing for `mcp --help` includes `start`.
+	helpformat.Install(mcpCmd, helpformat.Options{})
+
 	return mcpCmd
 }
 
 func newMcpStartCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: fmt.Sprintf("Start MCP server with Microsoft Foundry agent tools. %s", color.YellowString("(Preview)")),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMcpServer(cmd.Context())
 		},
 	}
+
+	helpformat.Install(cmd, helpformat.Options{})
+
+	return cmd
 }
 
 func runMcpServer(ctx context.Context) error {

@@ -404,3 +404,133 @@ func TestInstall_NoEmptyLocalFlagsBlockWhenOnlyHelpRegistered(t *testing.T) {
 	require.Contains(t, out, "Global Flags:", "--help should still appear in Global Flags")
 	require.Contains(t, out, "--help")
 }
+
+// TestInstall_AutoMigratesExampleFieldWhenFooterAbsent verifies that
+// commands which leave the legacy cobra.Command.Example field set
+// (and don't supply Options.Footer) get their examples auto-promoted
+// into a styled Examples block AND have cmd.Example cleared so cobra's
+// default template doesn't double-render an unstyled section.
+func TestInstall_AutoMigratesExampleFieldWhenFooterAbsent(t *testing.T) {
+	withColorDisabled(t)
+
+	cmd := &cobra.Command{
+		Use:   "leaf",
+		Short: "Leaf.",
+		Run:   func(c *cobra.Command, args []string) {},
+		Example: `  # First scenario
+  demo --flag value
+
+  # Second scenario with a placeholder
+  demo <path>`,
+	}
+	Install(cmd, Options{})
+
+	require.Equal(t, "", cmd.Example, "cmd.Example must be cleared after auto-migration to avoid double-render")
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	require.NoError(t, cmd.Help())
+
+	out := buf.String()
+	require.Contains(t, out, "Examples:")
+	require.Contains(t, out, "First scenario")
+	require.Contains(t, out, "Second scenario with a placeholder")
+	require.Contains(t, out, "demo --flag value")
+	require.Contains(t, out, "demo <path>")
+}
+
+// TestInstall_FooterTakesPrecedenceOverAutoMigration confirms that
+// when a caller supplies an explicit Footer AND cmd.Example is also
+// set, the explicit Footer wins (and cmd.Example is left alone).
+func TestInstall_FooterTakesPrecedenceOverAutoMigration(t *testing.T) {
+	withColorDisabled(t)
+
+	cmd := &cobra.Command{
+		Use:     "leaf",
+		Short:   "Leaf.",
+		Run:     func(c *cobra.Command, args []string) {},
+		Example: "  # Auto title\n  auto cmd",
+	}
+	Install(cmd, Options{
+		Footer: func(c *cobra.Command) string {
+			return Examples(map[string]string{"Explicit title": "explicit cmd"})
+		},
+	})
+
+	// cmd.Example is left intact since the explicit Footer overrode
+	// the auto-migration path -- callers may still inspect it.
+	require.Equal(t, "  # Auto title\n  auto cmd", cmd.Example)
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	require.NoError(t, cmd.Help())
+
+	out := buf.String()
+	require.Contains(t, out, "Explicit title")
+	require.Contains(t, out, "explicit cmd")
+	require.NotContains(t, out, "Auto title", "explicit Footer must override auto-migration")
+}
+
+func TestParseExampleText_StylesFlagsAndPlaceholders(t *testing.T) {
+	// Force color on to assert the tokens get wrapped in ANSI escapes.
+	withColorEnabled(t)
+
+	in := `  # Scenario
+  demo --flag value <placeholder> [optional] plainArg`
+
+	samples := parseExampleText(in)
+	require.Contains(t, samples, "Scenario.")
+	body := samples["Scenario."]
+	// --flag and the bracketed/angle-bracketed tokens should be wrapped
+	// in ANSI escapes; plainArg should not.
+	require.Contains(t, body, "\x1b[", "expected ANSI escape sequences on at least one token")
+	require.Contains(t, body, "plainArg")
+}
+
+// TestInstallAll_RecursivelyStylesAndRespectsPreInstalled verifies the
+// bulk wiring path used by root constructors. Pre-Installed commands
+// keep their custom Description; un-Installed children get default
+// styling; hidden commands stay un-Installed.
+func TestInstallAll_RecursivelyStylesAndRespectsPreInstalled(t *testing.T) {
+	withColorDisabled(t)
+
+	root := &cobra.Command{Use: "root", Short: "Root."}
+	visible := &cobra.Command{
+		Use:   "visible",
+		Short: "Visible leaf.",
+		Run:   func(c *cobra.Command, args []string) {},
+	}
+	hidden := &cobra.Command{
+		Use:    "hidden",
+		Short:  "Hidden leaf.",
+		Hidden: true,
+		Run:    func(c *cobra.Command, args []string) {},
+	}
+	preStyled := &cobra.Command{
+		Use:   "prestyled",
+		Short: "Pre-styled leaf.",
+		Run:   func(c *cobra.Command, args []string) {},
+	}
+	Install(preStyled, Options{
+		Description: func(c *cobra.Command) string {
+			return Description("CUSTOM-MARKER")
+		},
+	})
+
+	root.AddCommand(visible, hidden, preStyled)
+	InstallAll(root)
+
+	// visible should now be installed by InstallAll.
+	require.True(t, isInstalled(visible), "InstallAll should style visible leaf")
+
+	// hidden should remain un-installed (no --help styling for hidden surfaces).
+	require.False(t, isInstalled(hidden), "InstallAll should skip hidden leaves")
+
+	// preStyled should retain its CUSTOM-MARKER description even after
+	// InstallAll runs.
+	var buf bytes.Buffer
+	preStyled.SetOut(&buf)
+	require.NoError(t, preStyled.Help())
+	require.Contains(t, buf.String(), "CUSTOM-MARKER",
+		"InstallAll must not clobber per-command customizations")
+}

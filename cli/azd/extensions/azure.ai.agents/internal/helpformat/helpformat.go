@@ -79,6 +79,15 @@ type Options struct {
 // containing literal "{{" or "}}" -- e.g. a GitHub Actions example
 // "${{ secrets.FOO }}" -- renders correctly instead of failing at help
 // render time.
+//
+// When opts.Footer is nil AND cmd.Example is non-empty, Install AUTO-
+// MIGRATES the cobra.Command.Example string into a styled Examples
+// block (parsed from the "# title\n  command" shape the rest of azd
+// uses) and clears cmd.Example so cobra's default template does not
+// double-render. This lets call sites add styled help with a single
+// Install(cmd, Options{}) line, without manually rewriting every
+// example. Callers that want fully colored token highlighting in their
+// examples can supply their own Footer via helpformat.Examples(...).
 func Install(cmd *cobra.Command, opts Options) {
 	registerTemplateFuncs()
 	cmd.SetUsageTemplate(styledUsageTemplate)
@@ -91,11 +100,25 @@ func Install(cmd *cobra.Command, opts Options) {
 	} else {
 		delete(cmd.Annotations, helpformatDescriptionAnnotation)
 	}
-	if opts.Footer != nil {
+	switch {
+	case opts.Footer != nil:
 		cmd.Annotations[helpformatFooterAnnotation] = opts.Footer(cmd)
-	} else {
+	case cmd.Example != "":
+		// Auto-migrate the existing cobra.Command.Example field into a
+		// styled Examples block. The parser treats lines starting with
+		// "#" as titles and the next non-blank line(s) as the command.
+		// Token-level coloring is best-effort: tokens starting with
+		// "--" render blue (flag) and tokens starting with "[" or "<"
+		// render yellow (placeholder). Everything else stays plain.
+		if samples := parseExampleText(cmd.Example); len(samples) > 0 {
+			cmd.Annotations[helpformatFooterAnnotation] = Examples(samples)
+		}
+		cmd.Example = ""
+	default:
 		delete(cmd.Annotations, helpformatFooterAnnotation)
 	}
+
+	cmd.Annotations[installedAnnotation] = "true"
 
 	cmd.SetHelpTemplate(staticHelpTemplate)
 }
@@ -109,6 +132,55 @@ func Install(cmd *cobra.Command, opts Options) {
 func InstallUsageOnly(cmd *cobra.Command) {
 	registerTemplateFuncs()
 	cmd.SetUsageTemplate(styledUsageTemplate)
+}
+
+// InstallAll walks the cmd tree rooted at root and installs styled help
+// on every visible (non-hidden) command. The root command itself gets
+// InstallUsageOnly so any pre-existing custom HelpFunc (e.g. the agents
+// banner + state-aware preamble) keeps working; cmd.UsageString() from
+// inside that HelpFunc still returns styled output.
+//
+// Commands where Install (or InstallAll) was already called -- detected
+// via the helpformat.installed annotation -- are SKIPPED so per-command
+// customizations made during construction are preserved. The expected
+// wiring is:
+//
+//  1. Each newXxxCommand constructs its cobra.Command and adds subs.
+//  2. Commands that want bullets or hand-styled examples call
+//     helpformat.Install(cmd, helpformat.Options{...}) directly.
+//  3. The root constructor calls helpformat.InstallAll(rootCmd) ONCE
+//     after the full tree is built so every other command gets the
+//     default styling.
+//
+// Hidden commands are skipped (no --help styling needed for surfaces
+// users don't see), but their subtrees are still walked in case a
+// visible descendant lives under a hidden parent.
+func InstallAll(root *cobra.Command) {
+	if root == nil {
+		return
+	}
+	InstallUsageOnly(root)
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, child := range cmd.Commands() {
+			if !child.Hidden && !isInstalled(child) {
+				Install(child, Options{})
+			}
+			walk(child)
+		}
+	}
+	walk(root)
+}
+
+// installedAnnotation is set by Install so subsequent InstallAll calls
+// know to skip commands that were customized during construction.
+const installedAnnotation = "helpformat.installed"
+
+func isInstalled(cmd *cobra.Command) bool {
+	if cmd == nil || cmd.Annotations == nil {
+		return false
+	}
+	return cmd.Annotations[installedAnnotation] == "true"
 }
 
 // Description renders a preamble: a one-line title followed by bulleted
@@ -140,6 +212,75 @@ func Examples(samples map[string]string) string {
 	}
 	slices.Sort(lines)
 	return fmt.Sprintf("%s\n%s\n", sectionHeader("Examples"), strings.Join(lines, "\n\n"))
+}
+
+// parseExampleText converts the legacy cobra.Command.Example shape --
+//
+//	  # Title one
+//	  azd ai agent foo --flag value
+//
+//	  # Title two
+//	  azd ai agent bar
+//
+// into a map[title]command. Multiple command lines under one title are
+// joined with " ". Tokens starting with "--" are rendered blue (flag);
+// tokens starting with "[" or "<" are rendered yellow (placeholder);
+// the rest stay plain. This is best-effort: complex shell escaping or
+// inline backslash continuations will round-trip imperfectly. Callers
+// who need precise control should bypass this and call Examples()
+// directly with hand-styled command strings.
+func parseExampleText(raw string) map[string]string {
+	out := map[string]string{}
+	var (
+		currentTitle string
+		currentCmd   strings.Builder
+	)
+	flush := func() {
+		if currentTitle == "" {
+			return
+		}
+		body := strings.TrimSpace(currentCmd.String())
+		if body == "" {
+			return
+		}
+		out[currentTitle] = styleExampleCommand(body)
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			flush()
+			currentTitle = strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+			if currentTitle != "" && !strings.HasSuffix(currentTitle, ".") {
+				currentTitle += "."
+			}
+			currentCmd.Reset()
+			continue
+		}
+		if currentCmd.Len() > 0 {
+			currentCmd.WriteString(" ")
+		}
+		currentCmd.WriteString(trimmed)
+	}
+	flush()
+	return out
+}
+
+// styleExampleCommand applies best-effort token coloring to a single
+// command line. See parseExampleText for the rules and limitations.
+func styleExampleCommand(line string) string {
+	tokens := strings.Fields(line)
+	for i, t := range tokens {
+		switch {
+		case strings.HasPrefix(t, "--"):
+			tokens[i] = Flag(t)
+		case strings.HasPrefix(t, "<") || strings.HasPrefix(t, "["):
+			tokens[i] = Arg(t)
+		}
+	}
+	return strings.Join(tokens, " ")
 }
 
 // Flag renders a flag token in blue (e.g. "--template" inside a bullet).

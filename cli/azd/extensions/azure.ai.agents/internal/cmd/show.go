@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"azureaiagent/internal/cmd/nextstep"
+	"azureaiagent/internal/helpformat"
 	"azureaiagent/internal/pkg/agents/agent_api"
 	projectpkg "azureaiagent/internal/project"
 
@@ -52,14 +53,6 @@ func newShowCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 The agent name and version are resolved automatically from the azure.yaml service
 configuration and the current azd environment. Optionally specify the service name
 (from azure.yaml) as a positional argument when multiple agent services exist.`,
-		Example: `  # Show status (auto-resolves from azure.yaml)
-  azd ai agent show
-
-  # Show status for a specific agent service
-  azd ai agent show my-agent
-
-  # Show status as JSON
-  azd ai agent show --output json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -119,7 +112,29 @@ configuration and the current azd environment. Optionally specify the service na
 		Default:       "table",
 	})
 
+	// Install styled help after RegisterFlagOptions so the per-flag
+	// "(supported: ...)" enrichments render correctly. Examples migrated
+	// out of cobra.Command.Example into the Footer block.
+	helpformat.Install(cmd, helpformat.Options{
+		Footer: getCmdShowHelpFooter,
+	})
+
 	return cmd
+}
+
+func getCmdShowHelpFooter(*cobra.Command) string {
+	return helpformat.Examples(map[string]string{
+		"Show status (auto-resolves from azure.yaml).": helpformat.Command("azd ai agent show"),
+		"Show status for a specific agent service.": fmt.Sprintf("%s %s",
+			helpformat.Command("azd ai agent show"),
+			helpformat.Arg("[name]"),
+		),
+		"Show status as JSON.": fmt.Sprintf("%s %s %s",
+			helpformat.Command("azd ai agent show"),
+			helpformat.Flag("--output"),
+			helpformat.Arg("json"),
+		),
+	})
 }
 
 // notDeployedPayload is the JSON shape `azd ai agent show` emits when no

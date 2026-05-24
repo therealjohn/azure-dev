@@ -6,17 +6,25 @@ package cmd
 import (
 	"fmt"
 
+	"azureaiagent/internal/helpformat"
 	"azureaiagent/internal/version"
 
 	"github.com/spf13/cobra"
 )
 
 func newVersionCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Prints the version of the application",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("Version: %s\nCommit: %s\nBuild Date: %s\n", version.Version, version.Commit, version.BuildDate)
 		},
 	}
+
+	// Install styled --help so the section headers (Usage, Flags, Global Flags)
+	// match the rest of the extension. No bullets or examples warranted for a
+	// trivial version command.
+	helpformat.Install(cmd, helpformat.Options{})
+
+	return cmd
 }

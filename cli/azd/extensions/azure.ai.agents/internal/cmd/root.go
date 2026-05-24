@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	conncmd "azureaiagent/internal/connections/cmd"
+	"azureaiagent/internal/helpformat"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/fatih/color"
@@ -69,6 +70,14 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(conncmd.NewConnectionRootCommand(extCtx))
 	rootCmd.AddCommand(newEvalCommand(extCtx))
 	rootCmd.AddCommand(newOptimizeCommand(extCtx))
+
+	// Apply styled --help to every visible command in the tree. Commands
+	// that opted into custom Description/Footer (e.g. init) already
+	// called helpformat.Install and are skipped by InstallAll. The root
+	// command itself gets InstallUsageOnly so installAgentsHelpOutput's
+	// bespoke HelpFunc continues to drive the banner + state-aware
+	// preamble + env vars + docs sections.
+	helpformat.InstallAll(rootCmd)
 
 	return rootCmd
 }

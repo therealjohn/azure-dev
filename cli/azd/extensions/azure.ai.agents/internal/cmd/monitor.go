@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"azureaiagent/internal/exterrors"
+	"azureaiagent/internal/helpformat"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/spf13/cobra"
@@ -53,20 +54,6 @@ configuration and the current azd environment. Optionally specify the service na
 
 For agents configured with header-based isolation, pass --user-isolation-key
 and --chat-isolation-key when streaming session logs.`,
-		Example: `  # Monitor session logs (auto-resolves session from last invocation)
-  azd ai agent monitor
-
-  # Monitor logs for a specific agent service
-  azd ai agent monitor my-agent
-
-  # Stream logs for a specific session
-  azd ai agent monitor --session-id <session-id>
-
-  # Stream session logs in real-time
-  azd ai agent monitor --session-id <session-id> --follow
-
-  # Fetch system event logs
-  azd ai agent monitor --type system`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -141,7 +128,40 @@ and --chat-isolation-key when streaming session logs.`,
 	cmd.Flags().BoolVar(&flags.raw, "raw", false, "Print the raw SSE stream without formatting")
 	addIsolationHeaderFlags(cmd, &flags.isolationHeaderFlags)
 
+	// Install styled help with the existing Long preserved verbatim and
+	// Example field migrated into a styled Footer.
+	helpformat.Install(cmd, helpformat.Options{
+		Footer: getCmdMonitorHelpFooter,
+	})
+
 	return cmd
+}
+
+func getCmdMonitorHelpFooter(*cobra.Command) string {
+	return helpformat.Examples(map[string]string{
+		"Monitor session logs (auto-resolves session from last invocation).": helpformat.Command(
+			"azd ai agent monitor"),
+		"Monitor logs for a specific agent service.": fmt.Sprintf("%s %s",
+			helpformat.Command("azd ai agent monitor"),
+			helpformat.Arg("[name]"),
+		),
+		"Stream logs for a specific session.": fmt.Sprintf("%s %s %s",
+			helpformat.Command("azd ai agent monitor"),
+			helpformat.Flag("--session-id"),
+			helpformat.Arg("<session-id>"),
+		),
+		"Stream session logs in real-time.": fmt.Sprintf("%s %s %s %s",
+			helpformat.Command("azd ai agent monitor"),
+			helpformat.Flag("--session-id"),
+			helpformat.Arg("<session-id>"),
+			helpformat.Flag("--follow"),
+		),
+		"Fetch system event logs.": fmt.Sprintf("%s %s %s",
+			helpformat.Command("azd ai agent monitor"),
+			helpformat.Flag("--type"),
+			helpformat.Arg("system"),
+		),
+	})
 }
 
 // Run executes the monitor command logic.
