@@ -1,3 +1,7 @@
+---
+short: Bootstrap a new Foundry agent project end-to-end.
+order: 10
+---
 # Initialize: bootstrap a Microsoft Foundry agent project with azd
 
 Audience: an AI coding assistant driving the `azd ai agent` extension on

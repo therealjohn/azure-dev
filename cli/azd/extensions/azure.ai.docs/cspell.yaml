@@ -3,3 +3,15 @@ words:
   # Help styling helpers (cli/azd/extensions/*/internal/helpformat)
   - helpformat
   - cmdhelp
+  # Pre-existing terms in shipped agent topic markdown bodies
+  - myteam
+  - myproj
+  - sess
+overrides:
+  - filename: internal/cmd/doc_catalog.go
+    words:
+      # Intentional typo in a comment documenting yaml.v3 typo-detection.
+      - ordr
+  - filename: internal/cmd/doc_catalog_test.go
+    words:
+      - ordr

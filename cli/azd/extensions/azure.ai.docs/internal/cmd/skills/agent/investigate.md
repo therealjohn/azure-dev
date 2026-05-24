@@ -1,3 +1,7 @@
+---
+short: Inspect agent state, sessions, evals, and optimizations.
+order: 40
+---
 # Investigate: inspect agent state, sessions, evals, and optimizations
 
 Audience: an AI coding assistant tracing a deployed agent for the user.

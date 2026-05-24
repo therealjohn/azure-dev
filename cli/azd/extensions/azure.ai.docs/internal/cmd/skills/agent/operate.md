@@ -1,3 +1,7 @@
+---
+short: Run write commands, billed jobs, and destructive operations safely.
+order: 30
+---
 # Operate: write commands, billed jobs, destructive ops
 
 Audience: an AI coding assistant about to mutate a Foundry agent on

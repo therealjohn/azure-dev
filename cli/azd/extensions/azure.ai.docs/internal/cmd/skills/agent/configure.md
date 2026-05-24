@@ -1,3 +1,7 @@
+---
+short: Shape the agent before deploying (model, instructions, tools, connections).
+order: 20
+---
 # Configure: shape the agent before deploying
 
 Audience: an AI coding assistant configuring a Foundry agent project that

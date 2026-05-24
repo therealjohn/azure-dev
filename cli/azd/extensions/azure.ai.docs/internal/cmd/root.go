@@ -15,28 +15,12 @@ func NewRootCommand() *cobra.Command {
 		Name:  "doc",
 		Use:   "doc <command> [options]",
 		Short: "Agent-ready documentation for the Foundry azd extensions. (Preview)",
-		Long: `Single front door for agent-friendly documentation across every
-azure.ai.* extension.
-
-Each sibling ai.* extension owns its own embedded markdown topics; this
-extension routes topic requests to the right extension and renders the
-result. The shape mirrors a familiar "skills" surface: top-level lists the
-covered ai.* extensions, the next level lists topics for an extension,
-and the leaf prints a single topic.`,
+		// Long is intentionally empty: the styled Description function
+		// passed via helpformat.Install below drives the --help
+		// preamble (matching what runDocIndex prints for direct
+		// invocation). Keeping Long set would either duplicate or
+		// conflict with the catalog renderer's output.
 	})
-
-	// Examples migrated into a styled Examples block (auto-promoted by
-	// helpformat.InstallAll below from cmd.Example). The inline
-	// Examples: section previously embedded in Long is removed so the
-	// help output has exactly one Examples section, not two.
-	rootCmd.Example = `  # List ai.* extensions with docs
-  azd ai doc
-
-  # List topics for the agents extension
-  azd ai doc agent
-
-  # Print one topic's markdown
-  azd ai doc agent initialize`
 
 	// The root command itself renders the top-level index when invoked
 	// with no subcommand. Matches a familiar `skills` catalog shape so
@@ -57,15 +41,44 @@ and the leaf prints a single topic.`,
 	rootCmd.AddCommand(newVersionCommand(&extCtx.OutputFormat))
 	rootCmd.AddCommand(newMetadataCommand(rootCmd))
 
-	// docs root has no custom HelpFunc (unlike the agents root which
-	// brackets UsageString with a banner + env-vars + skills sections),
-	// so it can take the full Install treatment: HelpTemplate plus
-	// UsageTemplate, plus auto-migration of cmd.Example into a styled
-	// Examples block. Install runs FIRST so the root's HelpTemplate is
-	// set; InstallAll then walks subcommands (agent, skills+install,
-	// version, metadata) and skips the already-installed root.
-	helpformat.Install(rootCmd, helpformat.Options{})
+	// Wire the catalog renderer into root --help via Description+Footer
+	// so `azd ai doc --help` shows the same body+examples runDocIndex
+	// emits for direct invocation. cmd.Example MUST stay empty so
+	// helpformat.Install's auto-migration does not produce a third
+	// Examples block alongside the Footer-supplied one.
+	helpformat.Install(rootCmd, helpformat.Options{
+		Description: func(*cobra.Command) string { return renderRootBody(docCategories) },
+		Footer:      func(*cobra.Command) string { return renderRootExamples(docCategories) },
+	})
+
+	// Same wiring for the agent category command. We look it up from
+	// rootCmd's children to avoid threading the helpformat dependency
+	// down into doc_agent.go (keeps newAgentCommand cobra-only).
+	if agentCmd := findChild(rootCmd, "agent"); agentCmd != nil {
+		if cat := FindCategory("agent"); cat != nil {
+			c := *cat
+			helpformat.Install(agentCmd, helpformat.Options{
+				Description: func(*cobra.Command) string { return renderCatalogBody(c) },
+				Footer:      func(*cobra.Command) string { return renderCatalogExamples(c) },
+			})
+		}
+	}
+
+	// Walk the rest of the tree (skills, version, metadata) and apply
+	// default styling. InstallAll skips already-Installed commands so
+	// root and agent (above) keep their custom Description/Footer.
 	helpformat.InstallAll(rootCmd)
 
 	return rootCmd
+}
+
+// findChild returns the first direct subcommand of parent whose Name()
+// matches name. Returns nil when not found.
+func findChild(parent *cobra.Command, name string) *cobra.Command {
+	for _, c := range parent.Commands() {
+		if c.Name() == name {
+			return c
+		}
+	}
+	return nil
 }

@@ -30,20 +30,23 @@ func TestNewRootCommand_RunsIndexAsDefault(t *testing.T) {
 
 func TestDocCategories_HasAgentEntry(t *testing.T) {
 	// Pin the wire contract: as new ai.* extensions adopt topic groups in
-	// this extension, add them to docCategories. The SubcommandName MUST
-	// match the directory name under internal/cmd/skills/<name>/.
+	// this extension, add them to docCategories. The Name MUST match the
+	// directory name under internal/cmd/skills/<name>/.
 	require.NotEmpty(t, docCategories,
 		"docCategories must contain at least the agent entry")
-	assert.Equal(t, "agent", docCategories[0].SubcommandName,
+	assert.Equal(t, "agent", docCategories[0].Name,
 		"agent entry must be present")
 }
 
 func TestSkillsFS_HasFourAgentTopics(t *testing.T) {
 	// Pins the topic set so a future drop or rename is a deliberate test
 	// update -- topic names are the wire contract callers rely on.
-	var buf bytes.Buffer
-	require.NoError(t, listCategoryTopics(&buf, "agent"))
-	got := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	topics, err := loadCategoryTopics("agent")
+	require.NoError(t, err)
+	var got []string
+	for _, top := range topics {
+		got = append(got, top.Name)
+	}
 	assert.ElementsMatch(t, []string{
 		"configure",
 		"initialize",
