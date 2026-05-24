@@ -68,7 +68,8 @@ func TestExamples_Empty(t *testing.T) {
 }
 
 func TestExamples_DeterministicOrder(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel: withColorDisabled mutates color.NoColor which is
+	// process-global. Parallel tests in the same package would race.
 	withColorDisabled(t) // suppress ANSI so substring asserts are stable
 
 	samples := map[string]string{
@@ -328,4 +329,78 @@ func TestInstall_UseLineNoDuplicateCommandToken(t *testing.T) {
 	// `[command]` token total. Two would be a regression.
 	count := strings.Count(out, "[command]")
 	require.Equal(t, 1, count, "expected exactly one [command] token in Usage section, got %d. Output:\n%s", count, out)
+}
+
+// TestInstall_DescriptionWithTemplateLiterals is the regression for
+// rubber-duck-impl #2: description / footer text containing the Go
+// text/template delimiters `{{` and `}}` (e.g. a GitHub Actions example
+// like `${{ secrets.FOO }}`) must render as literal characters, not
+// be interpreted by the template parser.
+func TestInstall_DescriptionWithTemplateLiterals(t *testing.T) {
+	withColorDisabled(t)
+
+	hostile := "Use ${{ secrets.FOO }} for the token. {{not a directive}}"
+
+	cmd := &cobra.Command{
+		Use:   "leaf",
+		Short: "Leaf.",
+		Run:   func(c *cobra.Command, args []string) {},
+	}
+	Install(cmd, Options{
+		Description: func(c *cobra.Command) string {
+			return Description(hostile, Note("And ${{ ANOTHER }} in a bullet."))
+		},
+		Footer: func(c *cobra.Command) string {
+			return Examples(map[string]string{
+				"Use a workflow secret.": "demo --token ${{ secrets.FOO }}",
+			})
+		},
+	})
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	require.NoError(t, cmd.Help())
+
+	out := buf.String()
+	require.Contains(t, out, "${{ secrets.FOO }}", "template literal must render verbatim in description")
+	require.Contains(t, out, "{{not a directive}}", "free-standing {{...}} must render verbatim")
+	require.Contains(t, out, "${{ ANOTHER }}", "template literal in a Note bullet must render verbatim")
+	require.Contains(t, out, "${{ secrets.FOO }}", "template literal in Examples must render verbatim")
+}
+
+// TestInstall_NoEmptyLocalFlagsBlockWhenOnlyHelpRegistered is the
+// regression for rubber-duck-impl #1: cobra registers --help as a
+// LOCAL flag on every command at Execute() time. Our renderer filters
+// forced-globals (--help, --docs) out of the Local Flags section. If
+// the template's "show Local Flags?" guard uses cobra's
+// .HasAvailableLocalFlags, it would return true (because --help is
+// local), and we'd render an empty "Flags:" header with no body.
+//
+// helpformatHasLocalFlags() correctly returns false for this case.
+func TestInstall_NoEmptyLocalFlagsBlockWhenOnlyHelpRegistered(t *testing.T) {
+	withColorDisabled(t)
+
+	root := &cobra.Command{Use: "root"}
+	leaf := &cobra.Command{
+		Use:   "leaf",
+		Short: "Leaf with no real local flags.",
+		Run:   func(c *cobra.Command, args []string) {},
+	}
+	root.AddCommand(leaf)
+	Install(leaf, Options{})
+
+	// Drive --help via Execute so cobra registers it on the leaf's
+	// LocalFlags. Without Execute, --help is never added and the bug
+	// would not reproduce.
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"leaf", "--help"})
+	require.NoError(t, root.Execute())
+
+	out := buf.String()
+	require.NotContains(t, out, "Flags:\n\nGlobal Flags:",
+		"expected Local Flags section to be entirely omitted (no empty Flags: header). Output:\n%s", out)
+	require.Contains(t, out, "Global Flags:", "--help should still appear in Global Flags")
+	require.Contains(t, out, "--help")
 }

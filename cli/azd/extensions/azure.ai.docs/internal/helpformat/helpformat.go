@@ -70,10 +70,34 @@ type Options struct {
 // template funcs read live state at render time, so a late AddCommand
 // will still appear in Available Commands, but the call-site convention
 // helps reviewers reason about the final command tree.
+//
+// Description and Footer are pre-rendered at Install time and stored on
+// cmd.Annotations under helpformatDescriptionAnnotation /
+// helpformatFooterAnnotation. The HelpTemplate is then a fixed string
+// that reads those annotations via template funcs, so user-supplied text
+// never reaches the Go text/template parser. This means a description
+// containing literal "{{" or "}}" -- e.g. a GitHub Actions example
+// "${{ secrets.FOO }}" -- renders correctly instead of failing at help
+// render time.
 func Install(cmd *cobra.Command, opts Options) {
 	registerTemplateFuncs()
 	cmd.SetUsageTemplate(styledUsageTemplate)
-	cmd.SetHelpTemplate(buildHelpTemplate(cmd, opts))
+
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	if opts.Description != nil {
+		cmd.Annotations[helpformatDescriptionAnnotation] = opts.Description(cmd)
+	} else {
+		delete(cmd.Annotations, helpformatDescriptionAnnotation)
+	}
+	if opts.Footer != nil {
+		cmd.Annotations[helpformatFooterAnnotation] = opts.Footer(cmd)
+	} else {
+		delete(cmd.Annotations, helpformatFooterAnnotation)
+	}
+
+	cmd.SetHelpTemplate(staticHelpTemplate)
 }
 
 // InstallUsageOnly wires only the styled UsageTemplate onto cmd, leaving
@@ -148,6 +172,16 @@ var nonPersistentGlobalFlags = []string{"help", "docs"}
 // "split between flag title and description" column.
 const endOfTitleSentinel = "\x00"
 
+// Annotation keys for the per-command pre-rendered description and footer.
+// Stored on cmd.Annotations and read at help-render time by the
+// helpformatDescription / helpformatFooter template funcs. The indirection
+// keeps user text out of the template parser (regression guard against
+// help text that contains literal "{{" or "}}").
+const (
+	helpformatDescriptionAnnotation = "helpformat.description"
+	helpformatFooterAnnotation      = "helpformat.footer"
+)
+
 var (
 	templateFuncsOnce sync.Once
 	// styledUsageTemplate is the cobra template body for Usage / Aliases /
@@ -157,6 +191,12 @@ var (
 	// constant strings; the dynamic bodies are rendered at help time via
 	// the registered template funcs.
 	styledUsageTemplate = buildStyledUsageTemplate()
+
+	// staticHelpTemplate is the cobra HelpTemplate for any command wired
+	// via Install. It's a fixed string -- no per-command embedded text --
+	// so user help text never reaches the template parser. The funcs
+	// read from cmd.Annotations at help-render time.
+	staticHelpTemplate = "{{helpformatDescription .}}{{.UsageString}}{{helpformatFooter .}}"
 )
 
 // registerTemplateFuncs adds our helper funcs to cobra's template registry.
@@ -167,10 +207,13 @@ var (
 func registerTemplateFuncs() {
 	templateFuncsOnce.Do(func() {
 		cobra.AddTemplateFunc("helpformatLocalFlags", helpformatLocalFlags)
+		cobra.AddTemplateFunc("helpformatHasLocalFlags", helpformatHasLocalFlags)
 		cobra.AddTemplateFunc("helpformatGlobalFlags", helpformatGlobalFlags)
 		cobra.AddTemplateFunc("helpformatHasGlobalFlags", helpformatHasGlobalFlags)
 		cobra.AddTemplateFunc("helpformatCommands", helpformatCommands)
 		cobra.AddTemplateFunc("helpformatHasCommands", helpformatHasCommands)
+		cobra.AddTemplateFunc("helpformatDescription", helpformatDescription)
+		cobra.AddTemplateFunc("helpformatFooter", helpformatFooter)
 	})
 }
 
@@ -208,8 +251,13 @@ func buildStyledUsageTemplate() string {
 	b.WriteString(sectionHeader("Available Commands"))
 	b.WriteString("\n{{helpformatCommands .}}\n{{end}}")
 
-	// Local Flags section.
-	b.WriteString("{{if .HasAvailableLocalFlags}}\n")
+	// Local Flags section. Use our own predicate (NOT cobra's
+	// .HasAvailableLocalFlags) because we filter out forced-globals
+	// (--help, --docs) from this section. Cobra's predicate would
+	// say true whenever --help is auto-registered after Execute(),
+	// even on commands with no real local flags, leaving an empty
+	// "Flags:" block.
+	b.WriteString("{{if helpformatHasLocalFlags .}}\n")
 	b.WriteString(sectionHeader("Flags"))
 	b.WriteString("\n{{helpformatLocalFlags .}}\n{{end}}")
 
@@ -222,57 +270,44 @@ func buildStyledUsageTemplate() string {
 	return b.String()
 }
 
-// buildHelpTemplate composes the HelpTemplate for a specific cmd + opts.
-// Layout: <description>{{.UsageString}}<footer>.
-//
-//   - <description> is opts.Description(cmd) when provided, else the
-//     command's Long (or Short) text with a trailing blank line. Embedded
-//     as a literal string -- cobra does not interpret template directives
-//     inside the description text we inject.
-//   - {{.UsageString}} routes through cmd.UsageFunc, which the SDK wraps
-//     to apply per-command flag-option overrides BEFORE rendering the
-//     UsageTemplate above. This is THE reason we use SetUsageTemplate +
-//     SetHelpTemplate instead of SetHelpFunc.
-//   - <footer> is opts.Footer(cmd) when provided, else empty.
-func buildHelpTemplate(cmd *cobra.Command, opts Options) string {
-	var b strings.Builder
-
-	if opts.Description != nil {
-		desc := opts.Description(cmd)
-		// Ensure exactly one blank line between description and the
-		// following Usage section, regardless of how the builder
-		// terminated. Description() already appends "\n\n", but
-		// custom callers may not, so normalize.
-		desc = strings.TrimRight(desc, "\n")
-		if desc != "" {
-			b.WriteString(desc)
-			b.WriteString("\n\n")
-		}
-	} else {
-		// Fall back to cobra's default Long / Short precedence.
-		fallback := strings.TrimRightFunc(cmd.Long, isSpace)
-		if fallback == "" {
-			fallback = strings.TrimRightFunc(cmd.Short, isSpace)
-		}
-		if fallback != "" {
-			b.WriteString(fallback)
-			b.WriteString("\n\n")
+// helpformatDescription renders the per-command description block at
+// help-render time. It reads the pre-rendered string from cmd.Annotations
+// (populated by Install) so that user-supplied text never reaches the
+// Go text/template parser. Falls back to cobra's default Long/Short
+// precedence when Install was called with a nil Description.
+func helpformatDescription(cmd *cobra.Command) string {
+	if cmd.Annotations != nil {
+		if desc, ok := cmd.Annotations[helpformatDescriptionAnnotation]; ok {
+			desc = strings.TrimRight(desc, "\n")
+			if desc != "" {
+				return desc + "\n\n"
+			}
+			return ""
 		}
 	}
-
-	b.WriteString("{{.UsageString}}")
-
-	if opts.Footer != nil {
-		footer := opts.Footer(cmd)
-		if footer != "" {
-			// One blank line between Global Flags / Usage block and
-			// the footer (typically the Examples block).
-			b.WriteString("\n")
-			b.WriteString(footer)
-		}
+	fallback := strings.TrimRightFunc(cmd.Long, isSpace)
+	if fallback == "" {
+		fallback = strings.TrimRightFunc(cmd.Short, isSpace)
 	}
+	if fallback == "" {
+		return ""
+	}
+	return fallback + "\n\n"
+}
 
-	return b.String()
+// helpformatFooter renders the per-command footer block (typically the
+// Examples) at help-render time. Reads from cmd.Annotations populated
+// by Install. Returns "" (no leading newline) when no footer is set.
+func helpformatFooter(cmd *cobra.Command) string {
+	if cmd.Annotations == nil {
+		return ""
+	}
+	footer, ok := cmd.Annotations[helpformatFooterAnnotation]
+	if !ok || footer == "" {
+		return ""
+	}
+	// One blank line between the Usage block and the footer.
+	return "\n" + footer
 }
 
 func isSpace(r rune) bool { return r == ' ' || r == '\n' || r == '\r' || r == '\t' }
@@ -297,6 +332,15 @@ func sectionHeader(title string) string {
 // exist as local flags, mirroring core azd's split.
 func helpformatLocalFlags(cmd *cobra.Command) string {
 	return renderFlagSet(localFlagsExcludingForced(cmd))
+}
+
+// helpformatHasLocalFlags returns true when the Local Flags section
+// would render any rows. Distinct from cobra's .HasAvailableLocalFlags
+// because we filter forced-globals -- a command whose only local flag
+// is the auto-added --help would otherwise leave an empty Flags:
+// section visible.
+func helpformatHasLocalFlags(cmd *cobra.Command) bool {
+	return localFlagsExcludingForced(cmd).HasAvailableFlags()
 }
 
 // helpformatGlobalFlags renders the Global Flags section body. The set
