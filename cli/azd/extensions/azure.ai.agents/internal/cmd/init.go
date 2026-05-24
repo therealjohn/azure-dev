@@ -776,8 +776,15 @@ from code-deploy ZIP packaging (uses .gitignore syntax).`,
 					return err
 				}
 			} else {
-				// No manifest provided - prompt user for init mode
-				initMode, err := promptInitMode(ctx, azdClient)
+				// No manifest provided - prompt user for init mode.
+				// flags + cmd.OutOrStdout are threaded through so the
+				// helper can:
+				//   - short-circuit on --from-code
+				//   - return a deterministic ErrorWithSuggestion in
+				//     --no-prompt mode rather than failing on Select
+				//   - print a muted "Detected AZD AI bootstrap files"
+				//     line when it silently routes through from-code
+				initMode, err := promptInitMode(ctx, azdClient, flags, cmd.OutOrStdout())
 				if err != nil {
 					if exterrors.IsCancellation(err) {
 						return exterrors.Cancelled("initialization was cancelled")

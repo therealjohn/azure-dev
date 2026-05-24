@@ -86,19 +86,90 @@ const (
 	initModeTemplate = "template"
 )
 
-// promptInitMode asks the user whether to use existing code or start from a template.
-// If the current directory is empty, automatically returns initModeTemplate.
-// Returns initModeFromCode or initModeTemplate.
-func promptInitMode(ctx context.Context, azdClient *azdext.AzdClient) (string, error) {
+// promptInitMode resolves the init-mode for `azd ai agent init` --
+// "use the code in this directory" (initModeFromCode) vs "start new
+// from a template" (initModeTemplate). The routing order is:
+//
+//  1. flags.fromCode set -> initModeFromCode (explicit user/agent intent).
+//  2. cwd is empty -> initModeTemplate (no code to use; offer templates).
+//  3. cwd is "bootstrap-only" (only the pre-flow's azure.yaml stub
+//     plus housekeeping files) -> initModeFromCode silently. We pick
+//     from-code rather than template because:
+//
+//     a. InitFromCodeAction.ensureProject() correctly reuses the
+//        bootstrap azure.yaml instead of re-scaffolding the starter
+//        template, so the user's pre-flow setup is honored.
+//     b. promptAgentTemplate() also requires interactive mode -- routing
+//        bootstrap-only -> initModeTemplate would just defer the
+//        --no-prompt failure to a later prompt (rubber-duck #1).
+//
+//     In interactive mode we print a muted "Detected AZD AI bootstrap
+//     files; setting up a new agent." line so the user sees WHY the
+//     init-mode prompt did not appear (rubber-duck #9). In --no-prompt
+//     mode we stay silent to keep machine logs clean.
+//
+//  4. cwd is non-empty AND not bootstrap-only AND --no-prompt is set
+//     -> deterministic ErrorWithSuggestion. The interactive Select
+//     would have no way to resolve in non-interactive mode; surfacing
+//     the failure with an actionable suggestion (pass --from-code or
+//     --manifest) is better than letting the prompt RPC error out.
+//
+//  5. Otherwise -> interactive Select prompt (the legacy behavior).
+func promptInitMode(
+	ctx context.Context,
+	azdClient *azdext.AzdClient,
+	flags *initFlags,
+	out io.Writer,
+) (string, error) {
+	// 1. Explicit flag wins over any directory-state inference.
+	if flags != nil && flags.fromCode {
+		return initModeFromCode, nil
+	}
+
 	empty, err := dirIsEmpty(".")
 	if err != nil {
 		return "", fmt.Errorf("checking current directory: %w", err)
 	}
 
+	// 2. Empty dir => template flow (legacy behavior preserved).
 	if empty {
 		return initModeTemplate, nil
 	}
 
+	// 3. Bootstrap-only => silently route to from-code so the FOLLOW-UP
+	// `azd ai agent init` invocation after the pre-flow does not hit
+	// the wrong-shaped Select prompt.
+	bootstrap, err := dirIsAgentBootstrapOnly(".")
+	if err != nil {
+		// Do NOT swallow filesystem errors -- a permission failure
+		// here would otherwise route the user through the wrong prompt
+		// with no diagnostic.
+		return "", fmt.Errorf("checking for AZD AI bootstrap state: %w", err)
+	}
+	if bootstrap {
+		// Surface the silent short-circuit in interactive mode so the
+		// user understands WHY they did not see the usual init-mode
+		// question. Stay silent in --no-prompt mode.
+		if flags != nil && !flags.noPrompt && out != nil {
+			fmt.Fprintln(out, output.WithGrayFormat(
+				"Detected AZD AI bootstrap files; setting up a new agent."))
+		}
+		return initModeFromCode, nil
+	}
+
+	// 4. Non-empty, non-bootstrap, --no-prompt: bail with a clear
+	// suggestion rather than letting the Select RPC fail opaquely.
+	if flags != nil && flags.noPrompt {
+		return "", exterrors.Validation(
+			exterrors.CodePromptFailed,
+			"cannot determine init mode in non-interactive mode "+
+				"(directory is not empty and not from the AZD AI bootstrap pre-flow)",
+			"Pass --from-code to use the existing code, or "+
+				"--manifest <path> to use an agent manifest.",
+		)
+	}
+
+	// 5. Interactive Select (legacy behavior).
 	choices := []*azdext.SelectChoice{
 		{Label: "Use the code in the current directory", Value: initModeFromCode},
 		{Label: "Start new from a template", Value: initModeTemplate},
