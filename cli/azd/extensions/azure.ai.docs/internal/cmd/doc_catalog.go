@@ -124,6 +124,32 @@ var docCategories = []DocCategory{
 			"Print the investigate topic.":          "azd ai doc agent investigate",
 		},
 	},
+	{
+		Name:        "connection",
+		DisplayName: "Foundry project connections",
+		// Connections are referenced from `azure.yaml` and (today)
+		// managed by commands under `azd ai agent connection`. The
+		// imperative CLI is expected to move to `azd ai connection`
+		// once the namespace change in azure.ai.connections lands;
+		// this category names the conceptual area so the docs do not
+		// need to move when the command surface does.
+		Short: "Add, configure, and manage Foundry project connections " +
+			"(MCP, Azure AI Search, Bing, OpenAPI, OAuth2, ...).",
+		Preamble: []string{
+			"Connections are the credential + endpoint records that custom tools (MCP, OpenAPI, A2A) " +
+				"and connection-bound built-in tools (azure_ai_search, bing_grounding) reference at runtime.",
+			"Use `azd ai doc connection <topic>` to print one topic's body in full. " +
+				"Start with `overview` for the mental model, then `add` for end-to-end recipes.",
+		},
+		Examples: map[string]string{
+			"List topics for connections.":            "azd ai doc connection",
+			"Print the overview topic.":               "azd ai doc connection overview",
+			"Print the add topic (scenario recipes).": "azd ai doc connection add",
+			"Print the categories reference.":         "azd ai doc connection categories",
+			"Print the auth-types reference.":         "azd ai doc connection auth-types",
+			"Print the imperative CLI reference.":     "azd ai doc connection manage",
+		},
+	},
 }
 
 // init populates the Topics field of every DocCategory from the

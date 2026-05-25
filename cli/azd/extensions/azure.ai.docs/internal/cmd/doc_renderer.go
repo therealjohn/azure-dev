@@ -236,14 +236,19 @@ func referenceColumnWidth(refs []DocReference) int {
 }
 
 // categoryExtensionName maps a category Name to its full ai.*
-// extension identifier used in the preamble sentence. Today only
-// `agent` ships; future categories add a case here. Falls back to a
+// extension identifier used in the preamble sentence. Today
+// connections still live under `azd ai agent connection ...` but the
+// concept maps to the azure.ai.connections extension (currently a
+// stub) once the namespace move lands -- match the eventual name so
+// the preamble doesn't churn when commands relocate. Falls back to a
 // generic phrasing so a new category that forgets to update this map
 // still produces a sensible preamble.
 func categoryExtensionName(cat DocCategory) string {
 	switch cat.Name {
 	case "agent":
 		return "azure.ai.agents"
+	case "connection":
+		return "azure.ai.connections"
 	default:
 		return fmt.Sprintf("azure.ai.%s", cat.Name)
 	}

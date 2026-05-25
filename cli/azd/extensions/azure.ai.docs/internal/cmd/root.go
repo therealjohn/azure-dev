@@ -37,6 +37,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
 	rootCmd.AddCommand(newAgentCommand())
+	rootCmd.AddCommand(newConnectionCommand())
 	rootCmd.AddCommand(newSkillsCommand(extCtx))
 	rootCmd.AddCommand(newVersionCommand(&extCtx.OutputFormat))
 	rootCmd.AddCommand(newMetadataCommand(rootCmd))
@@ -58,6 +59,20 @@ func NewRootCommand() *cobra.Command {
 		if cat := FindCategory("agent"); cat != nil {
 			c := *cat
 			helpformat.Install(agentCmd, helpformat.Options{
+				Description: func(*cobra.Command) string { return renderCatalogBody(c) },
+				Footer:      func(*cobra.Command) string { return renderCatalogExamples(c) },
+			})
+		}
+	}
+
+	// Same wiring for the connection category command. Mirrors the agent
+	// block above so `azd ai doc connection --help` shows the same body +
+	// examples that runDocIndex (and the bare `connection` invocation)
+	// emit. doc_connection.go stays cobra-only.
+	if connectionCmd := findChild(rootCmd, "connection"); connectionCmd != nil {
+		if cat := FindCategory("connection"); cat != nil {
+			c := *cat
+			helpformat.Install(connectionCmd, helpformat.Options{
 				Description: func(*cobra.Command) string { return renderCatalogBody(c) },
 				Footer:      func(*cobra.Command) string { return renderCatalogExamples(c) },
 			})

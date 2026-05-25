@@ -30,14 +30,30 @@ This prints markdown to stdout. Read it directly -- do NOT pass `--output json` 
 | Pick a starting sample (DO THIS for any greenfield init)       | `samples`    |
 | Bootstrap a brand-new agent project (`azd ai agent init`)      | `initialize` |
 | Run + iterate on the agent LOCALLY (`azd ai agent run`)        | `develop`    |
-| Shape the agent operationally (connections, files, env vars)   | `configure`  |
-| Edit `agent.yaml` (model, tools, protocols, endpoint, card)    | `extend`     |
+| Shape the agent operationally (azure.yaml service config, connections, files, env vars) | `configure`  |
+| Edit the on-disk agent.yaml (env vars, endpoint, card, runtime)| `extend`     |
 | Provision + deploy + multi-service + versions + `.agentignore` | `deploy`     |
 | Generate / run / iterate on evals                              | `evaluate`   |
 | Invoke (billed), files mut, sessions mut, optimize, endpoint   | `operate`    |
 | Read-only inspection (state, sessions, logs, files, doctor)    | `investigate`|
 
 List all topics: `azd ai doc agent`.
+
+For connection-specific guidance (categories, auth types, credential externalization, end-to-end recipes like GitHub MCP / Azure AI Search / Bing / OpenAPI / A2A, imperative CLI reference), use:
+
+```bash
+azd ai doc connection <topic>
+```
+
+| Want to ...                                                    | Topic        |
+| -------------------------------------------------------------- | ------------ |
+| Mental model: declarative vs. pre-existing vs. imperative      | `overview`   |
+| Recipes for adding a specific connection (GitHub MCP, RAG, ...)| `add`        |
+| Reference of `category:` values                                | `categories` |
+| Reference of `authType:` + credential shapes + PARAM_* rule    | `auth-types` |
+| Imperative CLI (`azd ai agent connection list / create / ...`) | `manage`     |
+
+List all connection topics: `azd ai doc connection`.
 
 ----------------------------------------------------------------------
 
