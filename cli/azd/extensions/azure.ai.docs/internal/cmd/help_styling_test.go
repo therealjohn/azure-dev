@@ -182,7 +182,7 @@ func TestDocAgentCommandOutput_RichStyledCatalog(t *testing.T) {
 
 	// Per-topic descriptions from front-matter.
 	assert.Contains(t, out, "Bootstrap a new Foundry agent project end-to-end.")
-	assert.Contains(t, out, "Shape the agent before deploying")
+	assert.Contains(t, out, "Edit azure.yaml service config")
 	assert.Contains(t, out, "Run write commands")
 	assert.Contains(t, out, "Inspect agent state")
 

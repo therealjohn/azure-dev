@@ -1,155 +1,108 @@
 ---
 name: azd-ai-skill
 description: Scaffold, provision, deploy, evaluate, and operate AI agents on Microsoft Foundry from the terminal using the Azure Developer CLI (azd) and the azure.ai.agents extension. USE FOR azd ai agent, foundry agent, agent.yaml, deploying agents to Azure, running an agent locally, evaluating an agent, optimizing an agent. DO NOT USE FOR generic Azure CLI tasks, non-Foundry agent runtimes (LangChain, Autogen, Semantic Kernel), or LLM application code that does not target Foundry.
-allowed-tools: ["azd", "azd ai agent", "azd ai doc", "azd version", "azd extension list", "azd auth login", "azd config get defaults", "azd env get-values", "azd ai agent project show", "azd ai agent show", "azd ai agent doctor", "azd ai agent sample list"]
+allowed-tools: ["azd", "azd ai agent", "azd ai doc", "azd version", "azd extension list", "azd auth login", "azd config get defaults", "azd env get-values"]
 ---
 # AZD AI skill
 
-Audience: an AI coding assistant driving `azd` and the `azure.ai.agents` extension on behalf of a developer. This file is the ROUTER -- the deeper, per-job documentation lives in topic files you can pull on demand.
+You're driving `azd` and the `azure.ai.agents` extension on behalf of a developer. This file is the router. Pull a topic on demand for the details.
 
-Defaults this skill assumes:
+## Defaults
 
-* `--output json` and `--no-prompt` on `azd ai agent ...` commands (and the generic `azd version`, `azd extension list`) so every data-bearing command is scriptable. Do NOT add `--output json` to `azd ai doc ...` commands -- they emit markdown for you to read directly and silently ignore the flag. Read the markdown body as-is instead of grep'ing through it repeatedly.
-* Stop and ask the human when this file (or a topic) says "ask the human" OR when a write command returns a `confirmation_required` envelope (exit code 2).
-* Prefer `azd` over `az` (the Azure CLI). `azd` already knows the user's project context, subscription, and Foundry endpoint. Only shell out to `az` after `azd` (project show, config get defaults, env get-values) has been tried AND the human has been asked.
+* Add `--output json` and `--no-prompt` to `azd ai agent ...` commands so output is scriptable. **Do not** add `--output json` to `azd ai doc ...` -- doc commands print markdown either way. Read the topic body once; don't `grep` through it.
+* Prefer `azd` over `az`. `azd` already knows the project, subscription, and Foundry endpoint. Only fall back to `az` after `project show`, `config get defaults`, and `env get-values` come up empty AND the developer has been asked.
+* Stop and ask the developer when a topic says "ask the developer" or when a write command exits 2 with a `confirmation_required` envelope.
+* **Never** run `azd auth login` yourself. It opens a browser. Ask the developer.
 
-----------------------------------------------------------------------
-
-## Topic chooser
-
-For deeper guidance, pull ONE topic via:
-
-```bash
-azd ai doc agent <topic>
-```
-
-This prints markdown to stdout. Read it directly -- do NOT pass `--output json` (the doc commands return markdown either way) and do NOT pipe through `Select-String` / `grep` to fish for a section. Read the whole topic body once, then act.
-
-| Want to ...                                                    | Topic        |
-| -------------------------------------------------------------- | ------------ |
-| Pick a starting sample (DO THIS for any greenfield init)       | `samples`    |
-| Bootstrap a brand-new agent project (`azd ai agent init`)      | `initialize` |
-| Run + iterate on the agent LOCALLY (`azd ai agent run`)        | `develop`    |
-| Shape the agent operationally (azure.yaml service config, connections, files, env vars) | `configure`  |
-| Edit the on-disk agent.yaml (env vars, endpoint, card, runtime)| `extend`     |
-| Provision + deploy + multi-service + versions + `.agentignore` | `deploy`     |
-| Generate / run / iterate on evals                              | `evaluate`   |
-| Invoke (billed), files mut, sessions mut, optimize, endpoint   | `operate`    |
-| Read-only inspection (state, sessions, logs, files, doctor)    | `investigate`|
-
-List all topics: `azd ai doc agent`.
-
-For connection-specific guidance (categories, auth types, credential externalization, end-to-end recipes like GitHub MCP / Azure AI Search / Bing / OpenAPI / A2A, imperative CLI reference), use:
-
-```bash
-azd ai doc connection <topic>
-```
-
-| Want to ...                                                    | Topic        |
-| -------------------------------------------------------------- | ------------ |
-| Mental model: declarative vs. pre-existing vs. imperative      | `overview`   |
-| Recipes for adding a specific connection (GitHub MCP, RAG, ...)| `add`        |
-| Reference of `category:` values                                | `categories` |
-| Reference of `authType:` + credential shapes + PARAM_* rule    | `auth-types` |
-| Imperative CLI (`azd ai agent connection list / create / ...`) | `manage`     |
-
-List all connection topics: `azd ai doc connection`.
-
-----------------------------------------------------------------------
-
-## Always do this first
+## Start every session with
 
 ```bash
 azd version --output json
-azd extension list --output json    # must include azure.ai.agents
+azd extension list --output json     # must include azure.ai.agents
 azd auth login --check-status
 azd ai agent project show --output json
 azd ai agent show --output json
 ```
 
-`project show` returns identity + subscription + Foundry project endpoint. `show` returns the deployed-agent state. Branch on `show`'s `.status`:
+Branch on `show`'s `.status`:
 
-* `"active"` / `"deployed"` -- a deployed agent already exists. Jump to `investigate` (if diagnosing) or `operate` (if changing remote state).
-* `"not_deployed"` with a `next_step.suggestions[]` -- run the suggested command. Usually `azd deploy` (existing scaffold) or `azd ai agent init` (no scaffold yet). Before running `azd ai agent init` for a greenfield project, ALWAYS call `azd ai agent sample list --output json` first to pick a `manifestUrl`; then invoke init with `-m <manifestUrl>`. Pull the `samples` topic for the catalog contract. Reserve `--from-code` for brownfield (the cwd already contains hand-written agent source).
-* Other status or nonzero exit -- run `azd ai agent doctor --output json` and surface failing checks to the human.
+* `active` / `deployed` -> jump to `investigate` (diagnose) or `operate` (change remote state).
+* `not_deployed` with `next_step.suggestions[]` -> run the suggested command. For a greenfield init, always start with `azd ai agent sample list --output json` to pick a `manifestUrl`, then `azd ai agent init -m <manifestUrl>`. Use `--from-code` only when the cwd already has hand-written agent source.
+* Anything else -> `azd ai agent doctor --output json` and surface failing checks.
 
-Do NOT run `azd auth login` yourself -- it requires a browser. Ask the human.
+## Topics: agent workflow
 
-## Resolving subscription and location
+```bash
+azd ai doc agent <topic>
+```
 
-For SUBSCRIPTION or LOCATION (NOT project ID -- see the next section for that), use this cascade in order; stop at the first level that answers your question. Do NOT skip ahead to `az` -- it confuses users who picked azd specifically to avoid juggling two CLIs.
+| Want to ...                                                  | Topic         |
+| ------------------------------------------------------------ | ------------- |
+| Pick a starting sample (any greenfield init)                 | `samples`     |
+| Bootstrap a new agent project (`azd ai agent init`)          | `initialize`  |
+| Run + iterate locally (`azd ai agent run`)                   | `develop`     |
+| Edit `azure.yaml` service config (models, toolboxes, env)    | `configure`   |
+| Edit on-disk `agent.yaml` (env vars, endpoint, card, runtime)| `extend`      |
+| Provision, deploy, version, `.agentignore`                   | `deploy`      |
+| Generate, run, iterate evals                                 | `evaluate`    |
+| Invoke (billed), files, sessions, optimize, endpoint patches | `operate`     |
+| Inspect state, sessions, logs, files, doctor                 | `investigate` |
 
-1. `azd ai agent project show --output json` -- subscription, tenant, location, Foundry endpoint already wired into the active project.
-2. `azd config get defaults` -- user-level azd defaults (subscription, location). Returns JSON: `{ "location": "...", "subscription": "..." }`.
-3. `azd env get-values` -- the active azd environment's variables.
-4. Ask the human.
-5. Last resort, and ONLY for subscription/location: `az account list --output json`. Use this ONLY when 1-4 have been exhausted AND the human has approved the shell-out. This cascade does NOT apply to the project ID -- see the next section.
+List all: `azd ai doc agent`.
 
-----------------------------------------------------------------------
+## Topics: connections
 
-## Resolving the Foundry project ARM ID
+For everything connection-related (MCP, Azure AI Search, Bing, OpenAPI, A2A; auth types; credentials):
 
-The `--project-id` flag (or any other place that needs a Foundry project ARM ID, like `/subscriptions/.../providers/Microsoft.AI/projects/<name>`) is DIFFERENT from subscription/location. There is no safe `az` fallback: `az cognitiveservices ...` and `az resource list ...` will return the wrong shape of resource, or the wrong project entirely, and silently target the wrong agent.
+```bash
+azd ai doc connection <topic>
+```
 
-Resolution order, with NO discovery shortcuts:
+| Want to ...                                                  | Topic         |
+| ------------------------------------------------------------ | ------------- |
+| Mental model (declarative vs. pre-existing vs. imperative)   | `overview`    |
+| Step-by-step recipes for common scenarios                    | `add`         |
+| `category:` reference                                        | `categories`  |
+| `authType:` + credentials + `PARAM_*` env-var rule           | `auth-types`  |
+| Imperative CLI (`connection list / show / create / ...`)    | `manage`      |
 
-1. `azd ai agent project show --output json` -- if the active azd env already has `AZURE_AI_PROJECT_ENDPOINT` wired, the response includes a Foundry project record you can map to an ARM ID.
-2. Otherwise ASK THE HUMAN. When you ask, include these discovery instructions verbatim so the human knows where to look:
+## Resolving subscription, location, project ID
 
-   > Open the Foundry portal at https://ai.azure.com -> Operate -> Admin -> select your project -> Copy the Resource ID.
+For **subscription** or **location**, try in order:
 
-Do NOT shell out to `az cognitiveservices ...`, `az resource list ...`, or any other `az` command to discover the project ARM ID. The cascade in the previous section is scoped to subscription/location ONLY.
+1. `azd ai agent project show --output json`
+2. `azd config get defaults`
+3. `azd env get-values`
+4. Ask the developer.
+5. Last resort, with explicit consent: `az account list --output json`.
 
-----------------------------------------------------------------------
+For the **Foundry project ARM ID** (`--project-id`), there's no safe `az` fallback. Try `azd ai agent project show --output json`; otherwise ask the developer and include this hint:
 
-## Confirmation envelope (exit code 2)
+> Open https://ai.azure.com -> Operate -> Admin -> select your project -> Copy the Resource ID.
 
-Destructive / billed commands emit this JSON on stdout and exit 2 when invoked with `--no-prompt` but without `--force`:
+Don't shell out to `az cognitiveservices` or `az resource list` for the project ID -- they return the wrong resource shape.
+
+## Confirmation envelope (exit 2)
+
+Destructive or billed commands print JSON like this and exit 2 when run with `--no-prompt` and no `--force`:
 
 ```json
-{
-  "status": "confirmation_required",
-  "command": "agent files delete",
-  "description": "Delete X from agent Y.",
-  "classification": { "destructive": true, "idempotent": false },
-  "changes": ["Will delete file X from session Y of agent Z"],
-  "confirmCommand": "azd ai agent files delete X --force"
-}
+{ "status": "confirmation_required", "command": "...", "changes": [...], "confirmCommand": "... --force" }
 ```
 
 Rules:
 
-* Summarize `changes[]` for the human in plain English.
-* If the human's IMMEDIATELY PRIOR turn explicitly named this action (e.g. they said "deploy" or "yes deploy now" and the envelope is for `azd deploy`), they have ALREADY consented -- re-run with `--force` without asking again. Re-asking when the human just told you to do the exact thing is friction and erodes trust.
-* Otherwise, get explicit consent before re-running with `--force`.
-* Never auto-append `--force` to a command the human did not name.
+* Summarize `changes[]` for the developer in plain English.
+* If their **immediately prior** turn named this exact action ("deploy", "yes delete it"), they've already consented -- re-run with `--force`.
+* Otherwise, get explicit consent first. Never auto-append `--force`.
 * Run `confirmCommand` exactly as printed.
 
-----------------------------------------------------------------------
+For the full envelope shape, see `azd ai doc agent operate`.
 
-## Read-only commands you can call freely
+## When to stop and ask
 
-```bash
-azd ai agent show --output json
-azd ai agent project show --output json
-azd ai agent doctor --output json
-azd ai agent sample list --output json
-azd ai agent connection list --output json
-azd ai agent files list --output json
-azd ai agent sessions list --output json
-azd ai agent eval list --output json
-azd ai agent optimize list --output json
-azd config get defaults
-azd env get-values
-```
-
-----------------------------------------------------------------------
-
-## When to stop and ask the human
-
-* `--project-id` if the human did not provide one. ASK FIRST -- do NOT shell out to `az` to discover it. When you ask, give the human the Foundry portal directions from "Resolving the Foundry project ARM ID" above so they know where to find it.
-* Picking a model deployment when multiple candidates exist.
-* Any `confirmation_required` envelope (exit 2) -- unless the human's immediately prior turn already named this exact action (see "Confirmation envelope" rules above).
-* Any nonzero exit from `azd auth login --check-status`, `azd provision`, or `azd deploy` that does NOT include a clear `next_step` block in the JSON output.
-* Anything the human flagged "ask first" in their original request.
-
+* `--project-id` when not provided. Ask first; share the portal hint above.
+* Picking a model deployment when multiple are available.
+* Any `confirmation_required` envelope (unless prior turn already named it).
+* Any nonzero exit from `auth login --check-status`, `provision`, or `deploy` that lacks a `next_step` block.
+* Anything the developer flagged "ask first".

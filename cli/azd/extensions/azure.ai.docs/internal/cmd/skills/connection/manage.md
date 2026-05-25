@@ -4,30 +4,24 @@ order: 50
 ---
 # Connection management (imperative CLI)
 
-Reference for `azd ai agent connection` -- the imperative path for connection lifecycle. These commands target the Foundry project directly and do NOT touch `azure.yaml`.
+`azd ai agent connection` commands target the Foundry project directly. They do **not** touch `azure.yaml`. For the declarative path (connections defined in `azure.yaml` and provisioned via Bicep), see `overview` and `add`.
 
-For the declarative path (connections defined in `azure.yaml` and provisioned via Bicep), see `overview` and `add`. The two paths coexist; this topic covers when to reach for the CLI instead of editing `azure.yaml`.
+> The connection commands live under `azd ai agent connection ...` today. They will eventually move to `azd ai connection ...` (currently a stub in the `azure.ai.connections` extension). Use the agent-namespaced form for now.
 
-> **Note:** The connection commands currently live under `azd ai agent connection ...`. A separate `azd ai connection ...` namespace exists as a stub in the `azure.ai.connections` extension; that's the eventual destination once the namespace move lands. Use `azd ai agent connection ...` for now.
+## When to use this
 
----
+Imperative is right when:
 
-## When to use the imperative path
+* You're experimenting and don't want re-creation on every `azd provision`.
+* The connection is centrally owned (e.g. shared AI Search service).
+* You're adding a connection after provisioning and don't want to re-run provision for one thing.
+* You're scripting a one-off ops task (key rotation, target change).
 
-Reach for `azd ai agent connection create` when:
+Declarative (`azure.yaml`) is right when:
 
-* You're experimenting and don't want the connection re-created on every `azd provision`.
-* The connection is shared across teams / projects and owned by someone other than the azd project (e.g. a centrally-managed AI Search service the dev team uses).
-* You're adding a connection AFTER an `azd provision` has already run, and you don't want to re-run provision just for one connection.
-* You're scripting a one-off ops task (rotate a key, change a target URL).
-
-Reach for the declarative path (edit `azure.yaml`) when:
-
-* The connection is project-owned and should be reproducible on every fresh provision.
-* You want secrets stored as `PARAM_*` env vars under source control as `${PARAM_*}` references.
-* You want the connection to be deleted when the project is `azd down`'d.
-
----
+* The connection is project-owned and should reproduce on every fresh provision.
+* Secrets should live in source control as `${PARAM_*}` references with values in the env file.
+* The connection should disappear on `azd down`.
 
 ## List
 
@@ -36,9 +30,7 @@ azd ai agent connection list --output json
 azd ai agent connection list --kind cognitive-search --output json
 ```
 
-Returns an array of `{name, kind, authType, target}` objects. `--kind` filters server-side. Accepts both kebab-case slugs and ARM-canonical PascalCase (see `categories`).
-
----
+Returns `[{name, kind, authType, target}, ...]`. `--kind` filters server-side. Accepts slugs or ARM-canonical.
 
 ## Show
 
@@ -47,9 +39,7 @@ azd ai agent connection show <name> --output json
 azd ai agent connection show <name> --show-credentials --output json
 ```
 
-`--show-credentials` fetches the data-plane response that includes the raw secret values. Use this to recover an API key you don't have stored locally (the response is logged-only-to-stdout, never persisted by the CLI).
-
----
+`--show-credentials` fetches the raw secret values (data-plane response). Use this to recover a key. Output goes to stdout only; the CLI never persists it.
 
 ## Create
 
@@ -61,7 +51,7 @@ azd ai agent connection create <name> \
   [auth-specific flags]
 ```
 
-### Per-auth-type quick reference
+Per-auth-type:
 
 ```bash
 # ApiKey
@@ -71,7 +61,7 @@ azd ai agent connection create my-search \
   --auth-type api-key \
   --key "<key>"
 
-# CustomKeys (multiple key=value, repeatable)
+# CustomKeys (repeatable --custom-key)
 azd ai agent connection create my-mcp \
   --kind remote-tool \
   --target https://api.example.com/mcp \
@@ -87,21 +77,21 @@ azd ai agent connection create my-oauth-mcp \
   --client-id "<id>" \
   --client-secret "<secret>"
 
-# UserEntraToken (no key; audience required)
+# UserEntraToken (audience required)
 azd ai agent connection create workiq-mail \
   --kind remote-tool \
   --target https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools \
   --auth-type user-entra-token \
   --audience ea9ffc3e-8a23-4a7d-836d-234d7c7565c1
 
-# AgenticIdentity (no key; audience required)
+# AgenticIdentity (audience required)
 azd ai agent connection create downstream-svc \
   --kind remote-tool \
   --target https://internal.contoso.com/api \
   --auth-type agentic-identity \
   --audience https://contoso.com/.default
 
-# ProjectManagedIdentity (no key; audience optional)
+# ProjectManagedIdentity (audience optional)
 azd ai agent connection create peer-agent \
   --kind remote-tool \
   --target https://other-agent.foundry.azure.com/ \
@@ -122,87 +112,72 @@ azd ai agent connection create my-search \
   --metadata environment=prod
 ```
 
-### Replace an existing connection
+Replace an existing connection with `--force` (upsert):
 
 ```bash
-# Upsert (replaces if exists, creates if not)
 azd ai agent connection create my-search \
-  --kind cognitive-search \
-  --target https://my-search.search.windows.net/ \
-  --auth-type api-key \
-  --key "<new-key>" \
+  --kind cognitive-search --target ... --auth-type api-key --key "<new-key>" \
   --force
 ```
 
-Without `--force`, an existing connection causes `connection_already_exists`.
+Without `--force`, an existing name fails with `connection_already_exists`.
 
-### All flags
+## Flags
 
-| Flag                  | Required when                                | What it does                                                      |
-| --------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| `--kind <category>`   | always                                       | Connection category. Slug or ARM-canonical. See `categories`.     |
-| `--target <url>`      | always                                       | Endpoint URL or ARM resource ID.                                  |
-| `--auth-type <type>`  | always (defaults to `none`)                  | One of `api-key`, `custom-keys`, `none`, `oauth2`, `user-entra-token`, `project-managed-identity`, `agentic-identity`. |
-| `--key <value>`       | `--auth-type api-key`                        | API key value.                                                    |
-| `--custom-key k=v`    | `--auth-type custom-keys`                    | Repeatable. Each becomes a header (or per-category-specific KV).  |
-| `--client-id <id>`    | `--auth-type oauth2`                         | OAuth2 client ID.                                                 |
-| `--client-secret <s>` | `--auth-type oauth2`                         | OAuth2 client secret.                                             |
-| `--audience <value>`  | `--auth-type user-entra-token \| agentic-identity` | Token audience (the downstream resource's app ID URI or `https://<host>/.default`). |
-| `--metadata k=v`      | optional                                     | Repeatable. Category-specific metadata (e.g. `indexName=...` for CognitiveSearch). |
-| `--force`             | optional                                     | Upsert on `create`; skip the y/n prompt on `delete`.              |
-| `-p, --project-endpoint <url>` | optional                            | Override the Foundry project endpoint. Falls back to `AZURE_AI_PROJECT_ENDPOINT` then to azd config. |
-| `-o, --output table\|json` | optional                                 | Defaults to `table`.                                              |
-
----
+| Flag                        | Required when                       | What it does                                                                |
+| --------------------------- | ----------------------------------- | --------------------------------------------------------------------------- |
+| `--kind <category>`         | always                              | Slug or ARM-canonical. See `categories`.                                    |
+| `--target <url>`            | always                              | Endpoint URL or ARM resource ID.                                            |
+| `--auth-type <type>`        | always (defaults to `none`)         | `api-key`, `custom-keys`, `none`, `oauth2`, `user-entra-token`, `project-managed-identity`, `agentic-identity`. |
+| `--key <value>`             | `--auth-type api-key`               | API key value.                                                              |
+| `--custom-key k=v`          | `--auth-type custom-keys`           | Repeatable. Each becomes a header / per-category KV.                        |
+| `--client-id <id>`          | `--auth-type oauth2`                | OAuth2 client ID.                                                           |
+| `--client-secret <s>`       | `--auth-type oauth2`                | OAuth2 client secret.                                                       |
+| `--audience <value>`        | `user-entra-token` / `agentic-identity` | Token audience (downstream app ID URI or `https://<host>/.default`).    |
+| `--metadata k=v`            | optional                            | Repeatable. Category-specific (e.g. `indexName=...`).                       |
+| `--force`                   | optional                            | `create`: upsert. `delete`: skip y/n prompt.                                |
+| `-p, --project-endpoint`    | optional                            | Override the Foundry project endpoint. Falls back to `AZURE_AI_PROJECT_ENDPOINT` then azd config. |
+| `-o, --output table\|json`  | optional                            | Defaults to `table`.                                                        |
 
 ## Update
 
-Partial update -- only changes the fields specified. Refetches existing credentials and merges to avoid clobbering.
+Partial update -- only the specified fields change. Existing credentials are fetched and merged so you don't clobber them.
 
 ```bash
 # Change target only
 azd ai agent connection update my-search --target https://my-search-2.search.windows.net/
 
-# Rotate the API key only
+# Rotate the API key
 azd ai agent connection update my-search --key "<new-key>"
 
-# Update a custom-keys connection (keeps other keys; updates / adds named one)
+# Update one custom-keys entry (keeps the rest)
 azd ai agent connection update my-mcp --custom-key Authorization="Bearer new-token"
 ```
 
-Requires at least one of `--target`, `--key`, or `--custom-key`; otherwise `missing_connection_field`.
+Needs at least one of `--target`, `--key`, `--custom-key` -- otherwise `missing_connection_field`.
 
-Update intentionally CANNOT change `--kind` or `--auth-type` -- delete and re-create for those.
-
----
+`update` cannot change `--kind` or `--auth-type`. Delete and re-create for those.
 
 ## Delete
 
 ```bash
-# Interactive (prompts y/n)
-azd ai agent connection delete my-search
-
-# Non-interactive
-azd ai agent connection delete my-search --force
+azd ai agent connection delete my-search           # interactive
+azd ai agent connection delete my-search --force   # non-interactive
 ```
 
-Delete removes the connection from the Foundry project. Any tool that referenced it by `project_connection_id` will fail at call time until the reference is removed or repointed. Audit with `azd ai agent doctor --output json` afterwards.
+Removes the connection from the Foundry project. Any tool that referenced it by `project_connection_id` fails at call time until you remove or re-point the reference. Audit with `azd ai agent doctor --output json`.
 
-If the connection was DECLARED in `azure.yaml`, the next `azd provision` recreates it. To permanently remove, delete the entry from `azure.yaml` first, then run delete.
-
----
+If the connection was declared in `azure.yaml`, the next `azd provision` re-creates it. Delete the entry from `azure.yaml` first if you want it gone for good.
 
 ## Common error codes
 
 * `connection_already_exists` -- `create` without `--force` against an existing name.
-* `missing_connection_field` -- `update` without any of `--target`, `--key`, `--custom-key`. Or `create` missing `--kind` / `--target` / `--key` (for api-key) / `--custom-key` (for custom-keys) / `--client-id` + `--client-secret` (for oauth2).
-* `conflicting_arguments` -- e.g. `--audience` set with an auth type that doesn't take it, or `--client-id` set without `--auth-type oauth2`.
-* `invalid_connection` -- ARM rejected the connection (target unreachable, credentials malformed, category not supported by the Foundry project's tier).
-
----
+* `missing_connection_field` -- `update` with no `--target` / `--key` / `--custom-key`, or `create` missing a required flag for the auth type.
+* `conflicting_arguments` -- e.g. `--audience` with the wrong auth type, or `--client-id` without `--auth-type oauth2`.
+* `invalid_connection` -- ARM rejected the connection (target unreachable, credentials malformed, category not supported by the project tier).
 
 ## Confirmation envelope status
 
-The connection CLI does NOT yet emit `confirmation_required` JSON envelopes (the structured exit-2 contract used by other write commands like `deploy`, `endpoint update`, `files delete`). They have a simpler `--force` flag for non-interactive use.
+The connection CLI does **not** yet emit `confirmation_required` envelopes -- it uses a simpler `--force` flag for non-interactive runs.
 
-When running in agent mode, prefer the explicit per-flag form -- the human's consent is gathered out-of-band (you ask, they reply), then you run with `--force` if needed.
+When you're driving it in agent mode, get the developer's consent out-of-band (you ask, they reply), then re-run with `--force`.

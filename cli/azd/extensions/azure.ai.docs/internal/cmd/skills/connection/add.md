@@ -2,43 +2,33 @@
 short: Recipes for adding common connections (MCP, Azure AI Search, Bing, OpenAPI, A2A).
 order: 20
 ---
-# Connection add: recipes by scenario
+# Connection add: recipes
 
-Audience: an AI coding assistant adding a specific connection to an existing `azd ai agent` project. Pick the recipe matching the user's intent. Each recipe shows the manifest fragment (for seed-time init), the resulting `azure.yaml` shape (for manual post-init edits), and the env vars that need setting.
+Pick the recipe matching the user's intent. Each shows the manifest fragment (init-time input), the resulting `azure.yaml` block (what you edit post-init), and any env vars you need to set.
 
-For the mental model behind the three paths (declarative / pre-existing / imperative), read `overview` first.
+For the mental model, read `overview` first. For category and auth reference, see `categories` and `auth-types`.
 
----
-
-## How to use these recipes
-
-Each recipe has three parts:
-
-* **Manifest fragment** -- what you'd put in an `agent.manifest.yaml` if you were doing this at init time (`azd ai agent init -m <manifest>`). Useful as input for a fresh project.
-* **Resulting `azure.yaml`** -- what init produces. THIS is what you edit when adding the connection POST-init. Drop it under `services.<name>.config:`.
-* **Env vars** -- the `PARAM_*` values that need to be set with `azd env set` for `azd provision` to pick up the credentials.
+## Apply pattern
 
 After applying any recipe:
 
 ```bash
-azd provision   # Bicep creates the connection on the Foundry project
-azd deploy      # publishes / updates the toolbox referencing the connection (if any)
-azd ai agent invoke "..."   # smoke test
+azd provision     # Bicep creates / updates the connection on Foundry
+azd deploy        # publishes / updates the toolbox referencing it
+azd ai agent invoke "..."     # smoke test
 ```
 
----
+## GitHub MCP with a Personal Access Token (CustomKeys)
 
-## Recipe: GitHub MCP via Personal Access Token (CustomKeys)
+"Add GitHub MCP using my PAT for auth."
 
-User intent: "Add GitHub MCP as a tool with my PAT for auth."
-
-### Manifest fragment
+Manifest:
 
 ```yaml
 parameters:
   github_pat:
     secret: true
-    description: GitHub Personal Access Token (classic ghp_... or fine-grained github_pat_...)
+    description: GitHub PAT (ghp_... or github_pat_...)
 
 resources:
   - kind: connection
@@ -58,7 +48,7 @@ resources:
         project_connection_id: github-mcp-conn
 ```
 
-### Resulting `azure.yaml`
+azure.yaml:
 
 ```yaml
 services:
@@ -68,7 +58,7 @@ services:
         - name: github-mcp-conn
           category: RemoteTool
           target: https://api.githubcopilot.com/mcp
-          authType: CustomKeys   # promoted from credentials.type
+          authType: CustomKeys      # promoted from credentials.type
           credentials:
             keys:
               Authorization: ${PARAM_GITHUB_MCP_CONN_KEYS_AUTHORIZATION}
@@ -79,24 +69,19 @@ services:
               server_label: github
               server_url: https://api.githubcopilot.com/mcp
               project_connection_id: github-mcp-conn
-              # `target` / `authType` / `credentials` from the manifest tool entry
-              # are removed by init (they're hoisted into the connection above);
-              # `server_label`, `server_url`, and `project_connection_id` are kept.
 ```
 
-### Env vars
+Env vars:
 
 ```bash
 azd env set PARAM_GITHUB_MCP_CONN_KEYS_AUTHORIZATION "Bearer ghp_xxx..."
 ```
 
----
+## GitHub MCP via Foundry-managed OAuth2
 
-## Recipe: GitHub MCP via Foundry-managed OAuth2
+"Add GitHub MCP without handing me PATs -- let Microsoft manage the OAuth app."
 
-User intent: "Add GitHub MCP without handing me PATs -- let Microsoft manage the OAuth app."
-
-### Manifest fragment
+Manifest:
 
 ```yaml
 resources:
@@ -116,7 +101,7 @@ resources:
         project_connection_id: github-oauth-conn
 ```
 
-### Resulting `azure.yaml`
+azure.yaml:
 
 ```yaml
 services:
@@ -136,17 +121,13 @@ services:
               project_connection_id: github-oauth-conn
 ```
 
-### Env vars
+No env vars -- the Foundry platform handles client credentials. End users consent on first call.
 
-None for Foundry-managed OAuth -- the platform handles the client credentials. End users authorize the connection on first call via the standard OAuth2 consent flow.
+## MCP with the end-user's Entra token (UserEntraToken)
 
----
+"The agent should act as the user (1P OBO flow)."
 
-## Recipe: MCP server with user-on-behalf-of (UserEntraToken)
-
-User intent: "Add an MCP server that uses the END USER'S Entra token (1P OBO flow). The agent acts as the user, not as itself."
-
-### Manifest fragment
+Manifest:
 
 ```yaml
 resources:
@@ -154,7 +135,7 @@ resources:
     name: workiq-mail-conn
     category: RemoteTool
     authType: UserEntraToken
-    audience: ea9ffc3e-8a23-4a7d-836d-234d7c7565c1   # Required: token audience (the MCP server's app ID)
+    audience: ea9ffc3e-8a23-4a7d-836d-234d7c7565c1    # required: MCP server's app ID
     target: https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools
   - kind: toolbox
     name: agent-tools
@@ -164,37 +145,15 @@ resources:
         project_connection_id: workiq-mail-conn
 ```
 
-### Resulting `azure.yaml`
+azure.yaml: same shape as the manifest -- copy across.
 
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: workiq-mail-conn
-          category: RemoteTool
-          target: https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools
-          authType: UserEntraToken
-          audience: ea9ffc3e-8a23-4a7d-836d-234d7c7565c1
-      toolboxes:
-        - name: agent-tools
-          tools:
-            - type: mcp
-              server_label: workiq-mail
-              project_connection_id: workiq-mail-conn
-```
+No env vars. Token comes from the calling user at runtime. The Foundry project needs the right Entra app registrations and role assignments for OBO to succeed.
 
-### Env vars
+## Azure AI Search RAG
 
-None. The user's token is supplied at call time (Entra ID handles the on-behalf-of exchange). This auth type requires that the user invoking the agent has been granted the right Entra roles on the target MCP server.
+"Ground my agent's answers in an Azure AI Search index."
 
----
-
-## Recipe: Azure AI Search RAG
-
-User intent: "Ground my agent's answers in an Azure AI Search index."
-
-### Manifest fragment
+Manifest:
 
 ```yaml
 resources:
@@ -212,7 +171,7 @@ resources:
     name: search
 ```
 
-### Resulting `azure.yaml`
+azure.yaml:
 
 ```yaml
 services:
@@ -229,24 +188,22 @@ services:
             indexName: contoso-outdoors
       resources:
         - resource: azure_ai_search
-          connectionName: my-search-conn   # init PROMPTS for this name during the kind:tool path
+          connectionName: my-search-conn
 ```
 
-### Env vars
+Env vars:
 
 ```bash
 azd env set PARAM_MY_SEARCH_CONN_KEY "<search-admin-key>"
 ```
 
-Alternative: use `authType: AAD` and the agent's managed identity (no API key, no env var). Grant the agent's managed identity the `Search Index Data Reader` role on the search service. See `auth-types`.
+Alternative: `authType: AAD` (no key, no env var). Grant the agent's managed identity the `Search Index Data Reader` role on the search service. See `auth-types`.
 
----
+## Bing grounding
 
-## Recipe: Bing grounding
+"Add Bing grounding so the agent can cite real web sources."
 
-User intent: "Add Bing grounding so my agent can cite real web sources."
-
-### Manifest fragment
+Manifest:
 
 ```yaml
 resources:
@@ -262,7 +219,7 @@ resources:
     name: bing
 ```
 
-### Resulting `azure.yaml`
+azure.yaml:
 
 ```yaml
 services:
@@ -280,28 +237,17 @@ services:
           connectionName: bing-grounding-conn
 ```
 
-### Env vars
-
 ```bash
 azd env set PARAM_BING_GROUNDING_CONN_KEY "<bing-search-resource-key>"
 ```
 
-Simpler alternative -- if you just want plain web search without specific Bing grounding semantics, use the built-in `web_search` tool in a toolbox. It needs no connection.
+For plain "search the web" without Bing-grounding semantics, drop the connection and use the built-in `web_search` tool inside a toolbox -- it needs no connection.
 
-```yaml
-toolboxes:
-  - name: misc-tools
-    tools:
-      - type: web_search
-```
+## OpenAPI tool (ApiKey)
 
----
+"Wire up my internal REST API as a tool."
 
-## Recipe: OpenAPI tool with API-key auth
-
-User intent: "Wire up my internal REST API as a tool. It uses a static API key."
-
-### Manifest fragment
+Manifest:
 
 ```yaml
 resources:
@@ -317,42 +263,14 @@ resources:
     tools:
       - type: openapi
         project_connection_id: contoso-api-conn
-        # The OpenAPI spec lives in your agent source and gets uploaded at deploy time.
+        # OpenAPI spec lives in your agent source and gets uploaded at deploy time.
 ```
 
-### Resulting `azure.yaml`
+azure.yaml: same shape as the manifest. Externalize `key` to `${PARAM_CONTOSO_API_CONN_KEY}` and `azd env set` it.
 
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: contoso-api-conn
-          category: ApiKey
-          target: https://api.contoso.com
-          authType: ApiKey
-          credentials:
-            key: ${PARAM_CONTOSO_API_CONN_KEY}
-      toolboxes:
-        - name: agent-tools
-          tools:
-            - type: openapi
-              project_connection_id: contoso-api-conn
-```
+## A2A (Agent-to-Agent) bridge
 
-### Env vars
-
-```bash
-azd env set PARAM_CONTOSO_API_CONN_KEY "<api-key>"
-```
-
----
-
-## Recipe: A2A (Agent-to-Agent) bridge
-
-User intent: "Let my agent delegate work to another deployed agent."
-
-### Manifest fragment
+"Let my agent delegate to another deployed agent."
 
 ```yaml
 resources:
@@ -369,34 +287,11 @@ resources:
         project_connection_id: peer-agent-conn
 ```
 
-### Resulting `azure.yaml`
+No env vars -- the project's managed identity calls the peer agent.
 
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: peer-agent-conn
-          category: RemoteTool
-          target: https://other-agent.foundry-account.westus2.azure.com/
-          authType: ProjectManagedIdentity
-          audience: https://ai.azure.com/.default
-      toolboxes:
-        - name: agent-tools
-          tools:
-            - type: a2a_preview
-              project_connection_id: peer-agent-conn
-```
+## Multiple connections in one toolbox
 
-### Env vars
-
-None. ProjectManagedIdentity means the agent's MI calls the peer agent; no static credential.
-
----
-
-## Recipe: Multiple connections in one toolbox
-
-Toolboxes can mix any number of tools (built-in + custom) referencing different connections.
+Toolboxes can mix any number of tools, built-in + custom, against different connections:
 
 ```yaml
 services:
@@ -420,7 +315,7 @@ services:
             indexName: contoso-outdoors
       toolboxes:
         - name: agent-tools
-          description: "GitHub MCP + AI Search + web search + code execution."
+          description: GitHub MCP + AI Search + web search + code execution.
           tools:
             - type: mcp
               server_label: github
@@ -431,16 +326,14 @@ services:
             - type: code_interpreter
 ```
 
-Caveat (from Microsoft tool catalog docs): a toolbox supports at most ONE tool of a given built-in type without a `name:` field. To include multiple instances of the same type, set a unique `name` on each.
+Caveat: a toolbox can hold **at most one** built-in tool of each type without a `name`. To include two `web_search` instances (etc.), give each a unique `name`.
 
----
+## Remove a connection
 
-## Removing a connection
-
-1. Remove the `connection` entry from `azure.yaml` `services.<name>.config.connections[]` (or `toolConnections[]`).
-2. Remove any tools that reference it by `project_connection_id` from the corresponding toolbox `tools[]`, and any `resources[]` entry with matching `connectionName`.
+1. Remove the entry from `azure.yaml` `connections[]` (or `toolConnections[]`).
+2. Remove any tool referencing it via `project_connection_id`; remove any `resources[]` entry with matching `connectionName`.
 3. `azd env unset PARAM_<...>` for the credential env vars (optional but tidy).
-4. `azd provision` -- Bicep removes the connection from the Foundry project.
-5. `azd deploy` -- updates the toolbox to drop the tool.
+4. `azd provision` -- Bicep removes the connection from Foundry.
+5. `azd deploy` -- updates the toolbox.
 
-If the connection was created imperatively (via `azd ai agent connection create`), use `azd ai agent connection delete <name>` instead. `azd provision` will not touch it.
+If the connection was created imperatively, use `azd ai agent connection delete <name>` -- `azd provision` won't touch it.
