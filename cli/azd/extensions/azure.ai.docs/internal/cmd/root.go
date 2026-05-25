@@ -38,6 +38,7 @@ func NewRootCommand() *cobra.Command {
 
 	rootCmd.AddCommand(newAgentCommand())
 	rootCmd.AddCommand(newConnectionCommand())
+	rootCmd.AddCommand(newToolboxCommand())
 	rootCmd.AddCommand(newSkillsCommand(extCtx))
 	rootCmd.AddCommand(newVersionCommand(&extCtx.OutputFormat))
 	rootCmd.AddCommand(newMetadataCommand(rootCmd))
@@ -73,6 +74,18 @@ func NewRootCommand() *cobra.Command {
 		if cat := FindCategory("connection"); cat != nil {
 			c := *cat
 			helpformat.Install(connectionCmd, helpformat.Options{
+				Description: func(*cobra.Command) string { return renderCatalogBody(c) },
+				Footer:      func(*cobra.Command) string { return renderCatalogExamples(c) },
+			})
+		}
+	}
+
+	// Same wiring for the toolbox category command. Mirrors the agent /
+	// connection blocks above. doc_toolbox.go stays cobra-only.
+	if toolboxCmd := findChild(rootCmd, "toolbox"); toolboxCmd != nil {
+		if cat := FindCategory("toolbox"); cat != nil {
+			c := *cat
+			helpformat.Install(toolboxCmd, helpformat.Options{
 				Description: func(*cobra.Command) string { return renderCatalogBody(c) },
 				Footer:      func(*cobra.Command) string { return renderCatalogExamples(c) },
 			})

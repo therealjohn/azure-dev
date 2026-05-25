@@ -98,3 +98,4 @@ The full rule (nested-map handling, the `credentials.type` -> `authType` promoti
 * "Step-by-step for GitHub MCP / Azure AI Search / Bing / OpenAPI / A2A" -- `add`
 * "I just want the CLI for create / update / delete" -- `manage`
 * "How do connection blocks fit in azure.yaml overall?" -- `azd ai doc agent configure`
+* "How do I bundle the tools that use this connection?" -- `azd ai doc toolbox`

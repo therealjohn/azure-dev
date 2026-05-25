@@ -66,6 +66,21 @@ azd ai doc connection <topic>
 | `authType:` + credentials + `PARAM_*` env-var rule           | `auth-types`  |
 | Imperative CLI (`connection list / show / create / ...`)    | `manage`      |
 
+## Topics: toolboxes
+
+For grouping multiple tools under one MCP endpoint (`mcp`, `web_search`, `code_interpreter`, `azure_ai_search`, `openapi`, etc.):
+
+```bash
+azd ai doc toolbox <topic>
+```
+
+| Want to ...                                                  | Topic         |
+| ------------------------------------------------------------ | ------------- |
+| Mental model + how azd deploys / versions toolboxes          | `overview`    |
+| Step-by-step recipes (web search, MCP + connection, mixed)   | `add`         |
+| Reference of tool types you can put in a toolbox             | `tools`       |
+| Agent-side runtime wiring (env var, MCP client, header)      | `consume`     |
+
 ## Resolving subscription, location, project ID
 
 For **subscription** or **location**, try in order:

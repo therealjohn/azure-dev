@@ -73,7 +73,7 @@ Per field:
 * `container.resources` -- container cpu/memory. Mirrors the tiers init offers.
 * `deployments[]` -- model deployments to create via Bicep. `name` is the azd env var the deployed `agent.yaml` references.
 * `connections[]` -- Foundry project connections to create. See `connection add` for the full shape.
-* `toolboxes[]` -- reusable tool bundles. Each has `name`, `description`, and a `tools[]` array. See "Toolbox shape" below.
+* `toolboxes[]` -- reusable tool bundles. Each has `name`, `description`, and a `tools[]` array. See "Toolbox shape" below; for recipes and lifecycle deep-dive see `azd ai doc toolbox`.
 * `toolConnections[]` -- same shape as `connections[]`. Init hoists these out of toolbox `tools[]` entries that had `target:` + `authType:`. For new manual edits, prefer `connections[]`.
 * `resources[]` -- built-in tools needing a pre-existing connection name. Only `bing_grounding` and `azure_ai_search` belong here; everything else goes in a toolbox.
 

@@ -150,6 +150,29 @@ var docCategories = []DocCategory{
 			"Print the imperative CLI reference.":     "azd ai doc connection manage",
 		},
 	},
+	{
+		Name:        "toolbox",
+		DisplayName: "Foundry toolboxes",
+		// Toolboxes are declarative under azure.yaml; azd creates a
+		// new version on every deploy and surfaces the MCP endpoint
+		// via TOOLBOX_<NAME>_MCP_ENDPOINT. No dedicated CLI verb --
+		// the lifecycle is implicit in deploy. This category covers
+		// the conceptual area and the agent-side consumption pattern.
+		Short: "Bundle tools (MCP, Azure AI Search, web search, code interpreter, ...) into a single MCP endpoint.",
+		Preamble: []string{
+			"A toolbox is a curated bundle of tools exposed as a single MCP-compatible endpoint. " +
+				"Declared in `azure.yaml`; azd creates a new version on every deploy.",
+			"Use `azd ai doc toolbox <topic>` to print one topic's body in full. " +
+				"Start with `overview` for the lifecycle, then `add` for end-to-end recipes.",
+		},
+		Examples: map[string]string{
+			"List topics for toolboxes.":              "azd ai doc toolbox",
+			"Print the overview topic.":               "azd ai doc toolbox overview",
+			"Print the add topic (scenario recipes).": "azd ai doc toolbox add",
+			"Print the tool-types reference.":         "azd ai doc toolbox tools",
+			"Print the consumer-side runtime guide.":  "azd ai doc toolbox consume",
+		},
+	},
 }
 
 // init populates the Topics field of every DocCategory from the

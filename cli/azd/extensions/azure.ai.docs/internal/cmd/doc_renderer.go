@@ -240,15 +240,19 @@ func referenceColumnWidth(refs []DocReference) int {
 // connections still live under `azd ai agent connection ...` but the
 // concept maps to the azure.ai.connections extension (currently a
 // stub) once the namespace move lands -- match the eventual name so
-// the preamble doesn't churn when commands relocate. Falls back to a
-// generic phrasing so a new category that forgets to update this map
-// still produces a sensible preamble.
+// the preamble doesn't churn when commands relocate. Toolboxes live
+// inside the agents extension today (no dedicated CLI verb) -- name
+// the extension that owns the implementation. Falls back to a generic
+// phrasing so a new category that forgets to update this map still
+// produces a sensible preamble.
 func categoryExtensionName(cat DocCategory) string {
 	switch cat.Name {
 	case "agent":
 		return "azure.ai.agents"
 	case "connection":
 		return "azure.ai.connections"
+	case "toolbox":
+		return "azure.ai.agents"
 	default:
 		return fmt.Sprintf("azure.ai.%s", cat.Name)
 	}
