@@ -1,45 +1,81 @@
 ---
-short: What a toolbox is, how azd handles it, and the deploy lifecycle.
+short: What a toolbox is and how to create and manage one with the azd ai toolbox CLI.
 order: 10
 ---
 # Toolbox overview
 
-A **toolbox** is a curated bundle of tools that Foundry exposes as a single MCP-compatible endpoint. The agent connects to one URL and dynamically discovers every tool inside. Toolboxes are the recommended way to attach multiple tools to an agent -- one endpoint, central credential handling, no per-agent tool wiring.
+A **toolbox** is a curated bundle of connection-backed tools that Foundry exposes as a single MCP-compatible endpoint. The agent connects to one URL and dynamically discovers every tool inside. Toolboxes are the recommended way to group multiple connection-backed tools -- one endpoint, central credential handling, no per-agent tool wiring.
 
-Per the Foundry tool catalog: built-in tools (`web_search`, `code_interpreter`, `file_search`), MCP servers, OpenAPI APIs, Azure AI Search, Bing Custom Search, A2A peer agents, and the `toolbox_search_preview` directive can all live in the same toolbox.
+Today, toolboxes are managed through the `azd ai toolbox` CLI (from the `azure.ai.toolboxes` extension). `azd deploy` does NOT auto-create toolboxes. You install the extension once, then drive the lifecycle explicitly.
 
-For step-by-step recipes, see `add`. For the full tool-type reference, see `tools`. For how agent code uses the endpoint, see `consume`.
+For step-by-step recipes, see `add`. For the supported connection categories and their tool shapes, see `tools`. For agent-side runtime wiring, see `consume`.
 
-## How azd handles toolboxes
+## Install the extension
 
-Toolboxes are **declarative**. You define one under `services.<name>.config.toolboxes[]` in `azure.yaml`; azd takes over from there.
+```bash
+azd extension install azure.ai.toolboxes
+```
 
-| Stage              | What happens                                                                                          |
-| ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `azd ai agent init`| When the seed manifest has `kind: toolbox`, init writes it into `azure.yaml` and adds a matching `TOOLBOX_<NAME>_MCP_ENDPOINT` env var reference to the on-disk `agent.yaml`. |
-| `azd provision`    | Bicep creates / updates any connections under `connections[]` / `toolConnections[]` referenced by the toolbox's tools. |
-| `azd deploy`       | The agents extension calls `POST /toolboxes/{name}/versions?api-version=v1` for every toolbox in the service config. **A new version is created on every deploy** -- the toolbox itself is auto-created if it didn't exist. |
-| Post-deploy        | The version-pinned MCP URL is written back to the azd environment as `TOOLBOX_<NAME>_MCP_ENDPOINT`. The deployed agent's `environment_variables` already references `${TOOLBOX_<NAME>_MCP_ENDPOINT}`, so the running agent gets the new URL. |
+Then `azd ai toolbox --help` to see the verbs.
 
-Two consequences worth knowing:
+## The CLI surface
 
-* **You don't manage toolbox creation or versions through azd's CLI.** There's no `azd ai agent toolbox` command. The lifecycle is implicit in deploy.
-* **Every `azd deploy` produces a new version** of every toolbox in the project. Old versions stay on Foundry until you delete them via the SDK / REST / Foundry Toolkit. Agents deployed by azd always run against the latest version (it's the one in the env var).
+| Command                                                                          | What it does                                                  |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `azd ai toolbox create <name> --from-file <path>`                                | Create a toolbox + publish its initial version. File must list at least one existing project connection. |
+| `azd ai toolbox connection add <toolbox> <connection> [--index ...] [--instance-name ...]` | Attach a single connection; publishes a new default version. |
+| `azd ai toolbox connection add <toolbox> --from-file <path>`                     | Attach many connections in one call; publishes ONE new version. |
+| `azd ai toolbox connection remove <toolbox> <connection> [--force]`              | Detach a connection; publishes a new default version. Refuses to leave zero tools. |
+| `azd ai toolbox connection list <toolbox>`                                       | List the connection-backed tools attached to a toolbox.       |
+| `azd ai toolbox show <name> [--version <ver>]`                                   | Show the toolbox + its MCP endpoint URL. Defaults to the default version. |
+| `azd ai toolbox list`                                                            | List toolboxes on the project.                                |
+| `azd ai toolbox version list <toolbox>`                                          | List published versions for a toolbox.                        |
+| `azd ai toolbox update <name> --default-version <ver>`                           | Re-point the default version (the only field `update` supports today). |
+| `azd ai toolbox delete <name> [--version <ver>] [--force]`                       | Delete a whole toolbox, or a single version.                  |
 
-To list, get, promote, or delete toolbox versions out-of-band, use the Python / .NET / JavaScript SDKs or the REST API directly. azd is intentionally create-only.
+Every mutation publishes a new immutable version. The first version of a new toolbox is automatically the default; subsequent versions require an explicit `update --default-version` to promote.
 
-## Platform-injected env vars
+## Connections must already exist
 
-When a hosted agent runs on Foundry (after `azd up`), the platform injects two env vars for every toolbox in the service config:
+The toolbox CLI **does not create connections**. It attaches connections that already exist on the Foundry project. Two ways to get a connection on the project before calling `azd ai toolbox`:
 
-| Env var                              | What it is                                                                                |
-| ------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `FOUNDRY_AGENT_TOOLBOX_ENDPOINT`     | Base URL for toolbox endpoints on this project (no toolbox name). Useful when you want to construct per-toolbox URLs from `TOOLBOX_NAME` at runtime. |
-| `TOOLBOX_<NAME>_MCP_ENDPOINT`        | Full per-toolbox version-pinned MCP URL. Same name azd uses for the local-run env var.    |
+* **Imperative**: `azd ai agent connection create <name> --kind <category> --target ... --auth-type ... --key ...`. See `azd ai doc connection manage`.
+* **Declarative**: add a `kind: connection` resource to the seed manifest (or to `azure.yaml services.<name>.config.connections[]` post-init) and run `azd provision`. See `azd ai doc connection add`.
 
-For local runs (`azd ai agent run`), only `TOOLBOX_<NAME>_MCP_ENDPOINT` is set -- azd writes it to the active environment during `azd deploy`. The `FOUNDRY_AGENT_TOOLBOX_*` base URL is hosted-only.
+Once a connection exists, list them with `azd ai agent connection list --output json` -- the `name` field is what you pass to `azd ai toolbox`.
 
-Naming: the toolbox name is uppercased and non-alphanumeric characters collapse to `_`. `agent-tools` -> `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`. See `consume` for the full table.
+## The two file shapes
+
+Both `toolbox create --from-file` and `toolbox connection add --from-file` take the same connections list shape:
+
+```yaml
+description: research toolbox    # only accepted by `create`, not `connection add`
+connections:
+  - name: my-mcp                 # RemoteTool
+  - name: my-search              # CognitiveSearch -- needs `index`
+    index: products
+  - name: my-bing                # GroundingWithCustomSearch -- needs `instance_name`
+    instance_name: docs-config
+  - name: my-a2a                 # RemoteA2A
+```
+
+The toolbox derives the tool kind from the connection's category. You don't write `type: mcp` or `type: azure_ai_search` yourself.
+
+## Lifecycle at a glance
+
+| Stage                | What happens                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------------- |
+| Create connections   | Imperative (`azd ai agent connection create`) or declarative (`azd provision` after editing `azure.yaml`). |
+| `toolbox create`     | Publishes the initial version. Toolbox is created if it didn't exist. First version is the default. |
+| `toolbox connection add` / `remove` | Each call publishes a new version and promotes it to default.                                  |
+| Agent reads endpoint | Run `azd ai toolbox show <name>`; copy the `Endpoint` field; `azd env set TOOLBOX_<NAME>_ENDPOINT "<url>"`. The deployed agent reads the env var. |
+| Subsequent updates   | Re-run `toolbox connection add` / `remove` -- the new version becomes the default automatically, so the same env var URL keeps serving the latest. (Or pin a specific version via `--version` on `show` and don't auto-promote.) |
+
+## agent.yaml `kind: toolbox` -- the declarative shape
+
+`agent.yaml` (the seed manifest passed to `azd ai agent init -m`) accepts a `kind: toolbox` resource. Init lands it in `azure.yaml services.<name>.config.toolboxes[]` as a structured record of which tools belong to the toolbox.
+
+That block is the **declarative form** -- a record of intent. **Today, you also need to run the `azd ai toolbox` CLI** to create the toolbox on Foundry; the deploy pipeline does not yet read this block. See `add` for end-to-end recipes that include both the declarative shape and the CLI steps.
 
 ## Developer vs consumer endpoint
 
@@ -50,36 +86,21 @@ Foundry exposes two endpoint patterns:
 | `{project}/toolboxes/{name}/versions/{version}/mcp?api-version=v1`        | Version-pinned (developer / version-specific).             |
 | `{project}/toolboxes/{name}/mcp?api-version=v1`                           | Default version (consumer). Always serves `default_version`.|
 
-azd-deployed agents use the **version-pinned** form so deploys are reproducible -- the env var `TOOLBOX_<NAME>_MCP_ENDPOINT` always holds the version-specific URL of the version azd just published.
-
-If you want consumer-endpoint behavior (auto-pickup of a new default version without redeploying the agent), overwrite the env var manually:
-
-```bash
-azd env set TOOLBOX_MY_TOOLS_MCP_ENDPOINT \
-  "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/my-tools/mcp?api-version=v1"
-```
-
-Trade-off: agents now pick up new default versions automatically, but azd's deploy-time version pinning is bypassed. The default version of a new toolbox is `v1` until you promote another version via the SDK / REST.
+`azd ai toolbox show` prints the version-pinned URL of the version you're viewing. For auto-pickup of new default versions in the running agent, manually compose the consumer URL (drop the `/versions/<ver>` segment) and set THAT as the env var.
 
 ## Required header
 
-Every request to the toolbox MCP endpoint must include:
+Every request to a toolbox MCP endpoint must include:
 
 ```http
 Foundry-Features: Toolboxes=V1Preview
 ```
 
-The agents extension sends this header automatically when calling the management API. Your agent code MUST send it on every MCP call -- see `consume`.
-
-## When NOT to use a toolbox
-
-* The agent only needs a single built-in tool. `web_search`, `code_interpreter`, `function` work without a toolbox, depending on the runtime.
-* You need per-user isolation for `code_interpreter` or `file_search`. Toolbox-hosted versions share container / vector store across users in the project; use the direct (non-toolbox) tool form when isolation matters.
-* The tools are owned by another team and you only want to consume an existing toolbox. Skip the `toolboxes[]` block; set the consumer-endpoint URL manually as an env var.
+Your agent code MUST send it on every MCP call -- see `consume`.
 
 ## Where to go next
 
 * "How do I add a toolbox with X / Y / Z tools?" -> `add`
-* "What fields does the `mcp` / `openapi` / `azure_ai_search` tool take?" -> `tools`
+* "What connection categories does the CLI accept and what fields does each need?" -> `tools`
 * "How does my agent code call the toolbox at runtime?" -> `consume`
-* "How do I add a connection that a toolbox tool references?" -> `azd ai doc connection add`
+* "How do I create the connections the toolbox depends on?" -> `azd ai doc connection add`

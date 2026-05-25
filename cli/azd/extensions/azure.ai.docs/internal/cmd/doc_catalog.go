@@ -153,15 +153,16 @@ var docCategories = []DocCategory{
 	{
 		Name:        "toolbox",
 		DisplayName: "Foundry toolboxes",
-		// Toolboxes are declarative under azure.yaml; azd creates a
-		// new version on every deploy and surfaces the MCP endpoint
-		// via TOOLBOX_<NAME>_MCP_ENDPOINT. No dedicated CLI verb --
-		// the lifecycle is implicit in deploy. This category covers
-		// the conceptual area and the agent-side consumption pattern.
-		Short: "Bundle tools (MCP, Azure AI Search, web search, code interpreter, ...) into a single MCP endpoint.",
+		// Toolboxes are managed via the azd ai toolbox CLI today (from
+		// the azure.ai.toolboxes extension). The azure.yaml
+		// services.<name>.config.toolboxes[] block records the
+		// declarative shape but the CLI is what materializes a toolbox
+		// on Foundry today.
+		Short: "Bundle connection-backed tools (MCP, Azure AI Search, A2A, Bing Custom Search) into a single MCP endpoint.",
 		Preamble: []string{
-			"A toolbox is a curated bundle of tools exposed as a single MCP-compatible endpoint. " +
-				"Declared in `azure.yaml`; azd creates a new version on every deploy.",
+			"A toolbox is a curated bundle of connection-backed tools that Foundry exposes as " +
+				"a single MCP-compatible endpoint. Managed via the `azd ai toolbox` CLI (from " +
+				"the `azure.ai.toolboxes` extension).",
 			"Use `azd ai doc toolbox <topic>` to print one topic's body in full. " +
 				"Start with `overview` for the lifecycle, then `add` for end-to-end recipes.",
 		},

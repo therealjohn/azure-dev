@@ -29,7 +29,7 @@ After `azd ai agent init`, the agent is defined by two files. Putting a field in
 | Change container CPU / memory                                | `agent.yaml` `resources:` (cpu, memory)               | this               |
 | Swap a model deployment                                      | `azure.yaml ... config.deployments[]`                 | `configure`        |
 | Add / remove a connection                                    | `azure.yaml ... config.connections[]`                 | `connection add`   |
-| Add a toolbox or tool inside one                             | `azure.yaml ... config.toolboxes[]` (+ `toolConnections[]`) | `configure` + `connection add` |
+| Add a toolbox or tool inside one                             | `azure.yaml ... config.toolboxes[]` + `azd ai toolbox create/connection add` | `toolbox add`     |
 | Wire a built-in tool needing a connection (bing/search)      | `azure.yaml ... config.resources[]`                   | `configure`        |
 | Set a credential referenced as `${PARAM_...}`                | `azd env set PARAM_<CONN>_<KEY> <value>`              | `connection auth-types` |
 | Patch endpoint / card without a full redeploy                | `agent.yaml`, then `azd ai agent endpoint update`     | `configure`        |

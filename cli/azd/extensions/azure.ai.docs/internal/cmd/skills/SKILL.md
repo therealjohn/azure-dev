@@ -1,7 +1,7 @@
 ---
 name: azd-ai-skill
-description: Set up, scaffold, configure, deploy, evaluate, and operate AI agents on Microsoft Foundry using the Azure Developer CLI (azd) and the azure.ai.agents extension. USE FOR azd ai agent, foundry agent, agent.yaml, azure.yaml service config, hosted agent, deploying agents to Azure, running an agent locally, evaluating an agent, optimizing an agent, adding a tool to an agent, web search, code interpreter, file search, function tool, MCP server, OpenAPI tool, A2A peer agent, Azure AI Search RAG, Bing grounding, Bing Custom Search, toolbox, toolbox version, connection, RemoteTool, CognitiveSearch, OAuth2, UserEntraToken, AgenticIdentity, ProjectManagedIdentity, ApiKey, CustomKeys, model deployment, Foundry project endpoint. DO NOT USE FOR generic Azure CLI tasks unrelated to Foundry, or LLM application code that does not deploy to a Foundry hosted agent.
-allowed-tools: ["azd", "azd ai agent", "azd ai doc", "azd version", "azd extension list", "azd auth login", "azd config get defaults", "azd env get-values"]
+description: Set up, scaffold, configure, deploy, evaluate, and operate AI agents on Microsoft Foundry using the Azure Developer CLI (azd) and the azure.ai.agents extension. USE FOR azd ai agent, azd ai toolbox, foundry agent, agent.yaml, azure.yaml service config, hosted agent, deploying agents to Azure, running an agent locally, evaluating an agent, optimizing an agent, adding a tool to an agent, web search, code interpreter, file search, function tool, MCP server, OpenAPI tool, A2A peer agent, Azure AI Search RAG, Bing grounding, Bing Custom Search, toolbox, toolbox version, toolbox connection, connection, RemoteTool, CognitiveSearch, RemoteA2A, GroundingWithCustomSearch, OAuth2, UserEntraToken, AgenticIdentity, ProjectManagedIdentity, ApiKey, CustomKeys, model deployment, Foundry project endpoint. DO NOT USE FOR generic Azure CLI tasks unrelated to Foundry, or LLM application code that does not deploy to a Foundry hosted agent.
+allowed-tools: ["azd", "azd ai agent", "azd ai toolbox", "azd ai doc", "azd version", "azd extension list", "azd auth login", "azd config get defaults", "azd env get-values"]
 ---
 # AZD AI skill
 
@@ -76,9 +76,9 @@ azd ai doc toolbox <topic>
 
 | Want to ...                                                  | Topic         |
 | ------------------------------------------------------------ | ------------- |
-| Mental model + how azd deploys / versions toolboxes          | `overview`    |
-| Step-by-step recipes (web search, MCP + connection, mixed)   | `add`         |
-| Reference of tool types you can put in a toolbox             | `tools`       |
+| Mental model + the `azd ai toolbox` CLI surface              | `overview`    |
+| Step-by-step recipes (MCP, AI Search, A2A, Bing Custom)      | `add`         |
+| Connection categories + tool entry shapes                    | `tools`       |
 | Agent-side runtime wiring (env var, MCP client, header)      | `consume`     |
 
 ## Resolving subscription, location, project ID

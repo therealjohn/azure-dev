@@ -1,368 +1,285 @@
 ---
-short: Recipes for adding toolboxes (web search, MCP, AI search, file search, OpenAPI, A2A, tool search).
+short: Recipes for adding toolboxes via azd ai toolbox (MCP, AI Search, A2A, Bing Custom Search).
 order: 20
 ---
 # Toolbox add: recipes
 
-Each recipe shows the manifest fragment (init-time input), the resulting `azure.yaml` block (what you edit post-init), and any companion env vars or pre-created Foundry resources you need.
+Each recipe walks through:
 
-For the mental model and lifecycle, see `overview`. For the full tool-type reference, see `tools`. For connection setup, see `azd ai doc connection`.
+1. The **connection** the toolbox needs (created with `azd ai agent connection create`, or declaratively in `azure.yaml` + `azd provision`).
+2. The optional **declarative shape** under `azure.yaml services.<name>.config.toolboxes[]` (what init scaffolds from a `kind: toolbox` resource in the seed manifest -- a record of intent; today the CLI step below is what actually materializes it on Foundry).
+3. The **`azd ai toolbox` CLI** step that creates or updates the toolbox on Foundry.
+4. The **agent env var** the running agent reads.
 
-## Apply pattern
-
-After any recipe:
+Prerequisite once:
 
 ```bash
-azd provision     # only needed when the recipe adds a NEW connection (no connection in this deploy? skip)
-azd deploy        # creates a new toolbox version, updates TOOLBOX_<NAME>_MCP_ENDPOINT
-azd ai agent invoke "..."     # smoke test
+azd extension install azure.ai.toolboxes
 ```
+
+For the lifecycle, see `overview`. For per-category field reference, see `tools`. For connection setup, see `azd ai doc connection`.
 
 ## Post-init: adding a tool to an existing agent
 
-When you're modifying a project that already passed `azd ai agent init`, do these three checks before applying any recipe below. Init handles them automatically for greenfield projects; for post-init edits they're on you.
+When you're modifying an existing project to add a tool, do these three checks before applying any recipe below:
 
-**1. Existing toolbox? Merge instead of creating a new one.** Read `azure.yaml` first. If `services.<name>.config.toolboxes[]` already has a toolbox, append the new tool to its `tools[]` array instead of creating a second toolbox. One toolbox per agent is the simpler default unless you have a reason to split.
+**1. Connection exists on the project.** `azd ai agent connection list --output json` should show the connection name you'll pass to the toolbox CLI. If not, create it first (see `azd ai doc connection add`).
 
-```yaml
-# BEFORE -- existing toolbox
-toolboxes:
-  - name: agent-tools
-    tools:
-      - type: code_interpreter
+**2. Toolbox exists or not?** `azd ai toolbox list --output json`.
 
-# AFTER -- web_search appended to the same toolbox
-toolboxes:
-  - name: agent-tools
-    tools:
-      - type: code_interpreter
-      - type: web_search
+* If the toolbox doesn't exist -> use `azd ai toolbox create <name> --from-file <path>`.
+* If it does -> use `azd ai toolbox connection add <name> <connection>` (single tool) or `--from-file <path>` (multiple).
+
+Each call publishes a new version that becomes the default.
+
+**3. Agent env var.** After running the CLI, get the endpoint with `azd ai toolbox show <name>` and wire it into the agent:
+
+```bash
+ENDPOINT=$(azd ai toolbox show my-toolbox --output json | jq -r .endpoint)
+azd env set TOOLBOX_MY_TOOLBOX_ENDPOINT "$ENDPOINT"
 ```
 
-**2. Env-var reference in `<service>/agent.yaml`.** The deployed agent reads the toolbox MCP URL from `TOOLBOX_<NAME>_MCP_ENDPOINT`. Init wires this reference into `agent.yaml` for you; post-init, check and add it yourself if missing:
+(Name rule: uppercase the toolbox name and collapse non-alphanumeric to `_`. `my-toolbox` -> `TOOLBOX_MY_TOOLBOX_ENDPOINT`.)
+
+If the agent's `agent.yaml` doesn't already reference the env var under `environment_variables[]`, add it:
 
 ```yaml
-# In <service>/agent.yaml under environment_variables
 environment_variables:
-  - name: TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT
-    value: ${TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT}
+  - name: TOOLBOX_MY_TOOLBOX_ENDPOINT
+    value: ${TOOLBOX_MY_TOOLBOX_ENDPOINT}
 ```
 
-Name rule: uppercase the toolbox name and collapse non-alphanumeric to `_`. `agent-tools` -> `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`. Adding tools to an existing toolbox does NOT need a new env-var entry -- one per toolbox is enough.
+Then `azd deploy` so the deployed agent picks up the new env var.
 
-**3. Skip `azd provision` when no new connection was added.** Recipes that wire a `kind: connection` need `azd provision` to create the Bicep resource. Recipes that only touch `toolboxes[].tools[]` (web search, code interpreter, file search, an MCP tool against an EXISTING connection) only need `azd deploy`.
+## GitHub MCP via Personal Access Token
 
-## Web search only (no connection)
+User intent: "Add GitHub MCP."
 
-Smallest possible toolbox. `web_search` uses Bing grounding by default; no connection needed.
+**Connection (imperative):**
 
-Manifest:
+```bash
+azd ai agent connection create github-mcp-conn \
+  --kind remote-tool \
+  --target https://api.githubcopilot.com/mcp \
+  --auth-type custom-keys \
+  --custom-key Authorization="Bearer ghp_xxx..."
+```
+
+(For the declarative form in `azure.yaml`, see `azd ai doc connection add` -> GitHub MCP recipe.)
+
+**Declarative shape (optional, for the record):**
 
 ```yaml
-resources:
-  - kind: toolbox
-    name: agent-tools
+# azure.yaml services.<name>.config.toolboxes[]
+toolboxes:
+  - name: agent-tools
+    description: "Toolbox with GitHub MCP."
     tools:
-      - type: web_search
+      - type: mcp
+        project_connection_id: github-mcp-conn
 ```
 
-azure.yaml:
+**CLI -- create the toolbox:**
+
+```bash
+cat > tools.json <<EOF
+{
+  "description": "Toolbox with GitHub MCP.",
+  "connections": [{ "name": "github-mcp-conn" }]
+}
+EOF
+
+azd ai toolbox create agent-tools --from-file tools.json
+```
+
+Or add to an existing toolbox:
+
+```bash
+azd ai toolbox connection add agent-tools github-mcp-conn
+```
+
+**Wire the env var:**
+
+```bash
+ENDPOINT=$(azd ai toolbox show agent-tools --output json | jq -r .endpoint)
+azd env set TOOLBOX_AGENT_TOOLS_ENDPOINT "$ENDPOINT"
+```
+
+## Azure AI Search RAG
+
+User intent: "Ground my agent's answers in an Azure AI Search index."
+
+**Connection:**
+
+```bash
+azd ai agent connection create my-search-conn \
+  --kind cognitive-search \
+  --target https://my-search.search.windows.net/ \
+  --auth-type api-key \
+  --key "<search-admin-key>"
+```
+
+**Declarative shape:**
 
 ```yaml
-services:
-  my-agent:
-    config:
-      toolboxes:
-        - name: agent-tools
-          tools:
-            - type: web_search
+toolboxes:
+  - name: agent-tools
+    tools:
+      - type: azure_ai_search
+        index_name: contoso-outdoors
+        project_connection_id: my-search-conn
 ```
 
-No connection. No `azd provision` step needed -- straight to `azd deploy` (after the Post-init checks above for an existing project).
+**CLI -- attach the connection with the required `--index`:**
+
+```bash
+azd ai toolbox connection add agent-tools my-search-conn --index contoso-outdoors
+```
+
+Or as part of an initial `toolbox create`:
+
+```yaml
+# tools.yaml
+description: "AI Search RAG toolbox."
+connections:
+  - name: my-search-conn
+    index: contoso-outdoors
+```
+
+```bash
+azd ai toolbox create agent-tools --from-file tools.yaml
+```
+
+For multiple indexes against the same search service: add multiple entries with different `index` values. (The CLI surfaces each as a distinct toolbox tool.)
 
 ## Bing Custom Search
 
-For a scoped Bing Custom Search instance:
+User intent: "Add a scoped Bing Custom Search instance."
+
+**Connection (must pre-exist; create via Bicep or the portal -- the agent CLI doesn't accept `grounding-with-custom-search` today):**
 
 ```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: bing-custom-conn
-          category: GroundingWithCustomSearch
-          authType: ApiKey
-          target: ""
-          credentials:
-            key: ${PARAM_BING_CUSTOM_CONN_KEY}
-          metadata:
-            ResourceId: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Bing/accounts/<bing-account>
-            type: bing_custom_search
-      toolboxes:
-        - name: search-tools
-          tools:
-            - type: bing_custom_search
-              custom_search_configuration:
-                instance_name: your-bing-instance
-              project_connection_id: bing-custom-conn
+# azure.yaml services.<name>.config.connections[]
+- name: bing-custom-conn
+  category: GroundingWithCustomSearch
+  authType: ApiKey
+  target: ""
+  credentials:
+    key: ${PARAM_BING_CUSTOM_CONN_KEY}
+  metadata:
+    ResourceId: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Bing/accounts/<bing-account>
+    type: bing_custom_search
 ```
 
 ```bash
 azd env set PARAM_BING_CUSTOM_CONN_KEY "<bing-api-key>"
+azd provision
 ```
 
-For plain `bing_grounding` (the legacy top-level tool, NOT inside a toolbox), see `azd ai doc connection add` -> "Bing grounding".
-
-## Code interpreter + file search
-
-```yaml
-toolboxes:
-  - name: agent-tools
-    description: "Code execution + uploaded-file lookup."
-    tools:
-      - type: code_interpreter
-      - type: file_search
-        file_search:
-          vector_store_ids:
-            - ${FILE_SEARCH_VECTOR_STORE_ID}
-```
-
-`file_search` needs a pre-created vector store ID. Create one out-of-band:
+**CLI -- attach with the required `--instance-name`:**
 
 ```bash
-# 1. Upload a file
-curl -sS -X POST "$FOUNDRY_PROJECT_ENDPOINT/openai/v1/files" \
-  -H "Authorization: Bearer $TOKEN" -F purpose=assistants -F file=@docs.txt
-# 2. Create a vector store with the returned file ID
-curl -sS -X POST "$FOUNDRY_PROJECT_ENDPOINT/openai/v1/vector_stores" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"file_ids":["file-..."]}'
-# 3. Wire the vector store ID into the azd env
-azd env set FILE_SEARCH_VECTOR_STORE_ID "vs_xxxxxxxxxxxx"
+azd ai toolbox connection add agent-tools bing-custom-conn --instance-name docs-config
 ```
 
-`code_interpreter` accepts optional `container.type: auto` + `container.file_ids[]` for pre-uploaded inputs.
-
-Caveat (hosted): `code_interpreter` and `file_search` accessed through a toolbox do NOT support per-user isolation. All users in the project share the same container / vector store. Use the direct (non-toolbox) form if isolation matters.
-
-## MCP server with a Personal Access Token (CustomKeys)
-
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: github-mcp-conn
-          category: RemoteTool
-          target: https://api.githubcopilot.com/mcp
-          authType: CustomKeys
-          credentials:
-            keys:
-              Authorization: ${PARAM_GITHUB_MCP_CONN_KEYS_AUTHORIZATION}
-      toolboxes:
-        - name: agent-tools
-          tools:
-            - type: mcp
-              server_label: github
-              server_url: https://api.githubcopilot.com/mcp
-              project_connection_id: github-mcp-conn
-```
-
-```bash
-azd env set PARAM_GITHUB_MCP_CONN_KEYS_AUTHORIZATION "Bearer ghp_xxx..."
-```
-
-For OAuth, UserEntraToken, AgenticIdentity, and other MCP auth flows, see `azd ai doc connection add`.
-
-At deploy: the agents extension fills in `server_url` from the connection's `target` (if missing) and replaces `project_connection_id: github-mcp-conn` with the connection's ARM resource ID.
-
-## Azure AI Search inside a toolbox
-
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: my-search-conn
-          category: CognitiveSearch
-          target: https://my-search.search.windows.net/
-          authType: ApiKey
-          credentials:
-            key: ${PARAM_MY_SEARCH_CONN_KEY}
-      toolboxes:
-        - name: agent-tools
-          tools:
-            - type: azure_ai_search
-              index_name: contoso-outdoors
-              project_connection_id: my-search-conn
-              # Optional: top_k (default 5), query_type (default vector_semantic_hybrid),
-              # filter (applies to all queries).
-```
-
-```bash
-azd env set PARAM_MY_SEARCH_CONN_KEY "<search-admin-key>"
-```
-
-`index_name` is required on the tool entry (the connection just holds the search service endpoint + auth). For multiple indexes, add multiple `azure_ai_search` entries with unique `name:` fields. For the connection-only side (azure.yaml `resources[]` instead of a toolbox tool), see `azd ai doc connection add` -> "Azure AI Search RAG".
-
-## OpenAPI tool (key auth)
-
-The OpenAPI tool has a different shape from MCP -- everything nests under an `openapi:` key.
-
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: api-conn
-          category: CustomKeys
-          authType: CustomKeys
-          target: https://api.example.com
-          credentials:
-            keys:
-              key: ${PARAM_API_CONN_KEY}
-      toolboxes:
-        - name: openapi-tools
-          tools:
-            - type: openapi
-              openapi:
-                name: my-api
-                spec:
-                  openapi: "3.0.1"
-                  info: { title: "My API", version: "1.0" }
-                  servers: [{ url: https://api.example.com/v1 }]
-                  paths:
-                    /search:
-                      get:
-                        operationId: search
-                        parameters:
-                          - { name: query, in: query, required: true, schema: { type: string } }
-                        responses:
-                          "200": { description: OK }
-                auth:
-                  type: connection_auth
-                  connection_id: api-conn
-```
-
-```bash
-azd env set PARAM_API_CONN_KEY "<api-key>"
-```
-
-For other auth shapes (`anonymous`, `managed_identity`), see `tools` -> OpenAPI.
+For plain web search (no custom Bing instance), the toolbox CLI can't help today -- `web_search` is a built-in tool that the toolbox CLI doesn't expose. Use the SDK / REST flow if you need that inside a toolbox, or call `WebSearchTool()` directly in your agent code outside of any toolbox.
 
 ## A2A peer agent
 
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: a2a-conn
-          category: RemoteA2A
-          authType: None
-          target: https://your-remote-agent.azurecontainerapps.io
-      toolboxes:
-        - name: a2a-tools
-          tools:
-            - type: a2a_preview
-              project_connection_id: a2a-conn
+User intent: "Delegate to another deployed agent."
+
+**Connection:**
+
+```bash
+azd ai agent connection create peer-agent-conn \
+  --kind remote-a2a \
+  --target https://other-agent.foundry-account.westus2.azure.com/ \
+  --auth-type none
 ```
 
-For an authenticated peer, use `RemoteTool` + `ProjectManagedIdentity` (with `audience:`) instead. No env vars needed for `None` or `ProjectManagedIdentity`.
+For an authenticated peer, use `--auth-type project-managed-identity --audience https://ai.azure.com/.default` instead.
 
-## Multi-tool toolbox
+**CLI:**
 
-Mix freely. Add a `description` to every tool so the model can pick:
-
-```yaml
-services:
-  my-agent:
-    config:
-      connections:
-        - name: github-conn
-          category: RemoteTool
-          target: https://api.githubcopilot.com/mcp
-          authType: CustomKeys
-          credentials:
-            keys:
-              Authorization: ${PARAM_GITHUB_CONN_KEYS_AUTHORIZATION}
-        - name: my-search-conn
-          category: CognitiveSearch
-          target: https://my-search.search.windows.net/
-          authType: ApiKey
-          credentials:
-            key: ${PARAM_MY_SEARCH_CONN_KEY}
-      toolboxes:
-        - name: agent-tools
-          description: "GitHub MCP + AI Search + web search + code execution."
-          tools:
-            - type: mcp
-              server_label: github
-              project_connection_id: github-conn
-              description: GitHub repo operations.
-            - type: azure_ai_search
-              index_name: contoso-outdoors
-              project_connection_id: my-search-conn
-              description: Internal docs corpus.
-            - type: web_search
-              description: General web search.
-            - type: code_interpreter
-              description: Run Python for data analysis.
+```bash
+azd ai toolbox connection add agent-tools peer-agent-conn
 ```
 
-## Multiple instances of the same built-in type
+## Multi-connection toolbox via `--from-file`
 
-Foundry's toolbox API allows at most ONE built-in tool of a given type without a `name`. Give each instance a unique `name:` and a discriminating `description:`:
-
-```yaml
-toolboxes:
-  - name: agent-tools
-    tools:
-      - type: azure_ai_search
-        name: product-search
-        description: Search the product catalog.
-        index_name: products
-        project_connection_id: my-search-conn
-      - type: azure_ai_search
-        name: support-search
-        description: Search support tickets.
-        index_name: support
-        project_connection_id: my-search-conn
-```
-
-Without unique names the API returns `400 invalid_payload: Multiple tools without identifiers found...`.
-
-## Tool Search (intent-based routing)
-
-For large toolboxes, let the platform pick the most relevant tools per request instead of exposing every tool to the model:
+Bundle several connections in one new version:
 
 ```yaml
-toolboxes:
-  - name: agent-tools
-    tools:
-      - type: toolbox_search_preview
-      - type: web_search
-      - type: mcp
-        server_label: github
-        project_connection_id: github-mcp-conn
-      # ... many more tools
+# tools.yaml
+description: "GitHub MCP + AI Search + A2A peer."
+connections:
+  - name: github-mcp-conn
+  - name: my-search-conn
+    index: contoso-outdoors
+  - name: peer-agent-conn
 ```
 
-`toolbox_search_preview` is a directive -- it doesn't appear in `tools/list` and doesn't count toward the one-unnamed-per-type limit. No extra configuration needed.
+```bash
+# Initial create
+azd ai toolbox create agent-tools --from-file tools.yaml
 
-## Remove a tool from a toolbox
+# Or append all three to an existing toolbox in one new version
+azd ai toolbox connection add agent-tools --from-file tools.yaml
+```
 
-1. Remove the entry from `toolboxes[].tools[]` in `azure.yaml`.
-2. If no other tool references the connection, remove it from `connections[]`.
-3. `azd env unset PARAM_<...>` for any orphaned credential env vars.
-4. `azd deploy` -- creates a new toolbox version without the tool.
+`connection add --from-file` publishes ONE new version regardless of how many connections the file lists.
 
-To remove an entire toolbox: drop the `toolboxes[]` entry and `azd deploy`. The toolbox stays on Foundry (azd doesn't delete it); clean it up via the Foundry Toolkit, SDK, or REST API.
+## Built-in tools that the toolbox CLI doesn't manage
+
+The `azd ai toolbox` CLI only handles **connection-backed tools** (RemoteTool / CognitiveSearch / RemoteA2A / GroundingWithCustomSearch). These tools have no connection and are NOT addable via this CLI today:
+
+* `web_search` (plain Bing grounding)
+* `code_interpreter`
+* `file_search`
+* `function`
+* `toolbox_search_preview`
+
+If you need any of these inside a toolbox, create the toolbox version through the Python / .NET / JavaScript SDK or the REST API. The `azure.yaml services.<name>.config.toolboxes[].tools[]` block can still record them as the declarative shape, but the azd CLI won't push them to Foundry.
+
+## Remove a connection from a toolbox
+
+```bash
+azd ai toolbox connection remove agent-tools github-mcp-conn
+```
+
+Publishes a new default version without the tool. Refuses to leave the toolbox with zero tools -- delete the toolbox instead.
+
+## Delete a toolbox or version
+
+```bash
+# Delete a single version
+azd ai toolbox delete agent-tools --version v3
+
+# Delete the entire toolbox (cascades)
+azd ai toolbox delete agent-tools --force
+```
+
+`--force` skips the confirmation prompt; required for `--no-prompt` runs.
+
+## Promote a version manually
+
+The first version is auto-promoted. After that, `connection add` / `remove` auto-promote each new version. To pin a specific version:
+
+```bash
+azd ai toolbox update agent-tools --default-version v2
+```
 
 ## Validate
 
 ```bash
-azd ai agent doctor --output json
+azd ai toolbox list --output json
+azd ai toolbox show agent-tools --output json
+azd ai toolbox connection list agent-tools --output json
 ```
 
-Watch the `provisionToolboxes` output streamed to stderr during `azd deploy` -- a per-toolbox "Provisioning toolbox: X" / "Toolbox 'X' provisioned" pair confirms each one POSTed successfully.
+End-to-end smoke test:
+
+```bash
+azd deploy
+azd ai agent invoke "list the tools you have access to"
+```
