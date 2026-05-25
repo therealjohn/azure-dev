@@ -4,11 +4,9 @@ order: 45
 ---
 # Investigate: inspect agent state, sessions, evals, and optimizations
 
-Audience: an AI coding assistant tracing a deployed agent for the user.
-Every command in this topic is read-only -- safe to run anywhere, never
-mutates state, never requires `--force`.
+Audience: an AI coding assistant tracing a deployed agent for the user. Every command in this topic is read-only -- safe to run anywhere, never mutates state, never requires `--force`.
 
-----------------------------------------------------------------------
+---
 
 ## Start here
 
@@ -19,11 +17,9 @@ azd ai agent project show --output json
 azd ai agent show --output json
 ```
 
-If `show` returns `status: "not_deployed"`, the agent isn't there yet --
-switch to the `initialize` topic. Otherwise the rest of this topic is
-fair game.
+If `show` returns `status: "not_deployed"`, the agent isn't there yet -- switch to the `initialize` topic. Otherwise the rest of this topic is fair game.
 
-----------------------------------------------------------------------
+---
 
 ## Agent record
 
@@ -34,10 +30,9 @@ fair game.
 - `status` -- one of `active`, `idle`, `creating`, `failed`, etc.
 - `agent_endpoints` -- map of protocol label -> URL.
 - `playground_url` -- portal link the user can open in a browser.
-- `next_step` -- present only when `status` is not active/idle; carries
-  the recommended remediation command.
+- `next_step` -- present only when `status` is not active/idle; carries the recommended remediation command.
 
-----------------------------------------------------------------------
+---
 
 ## Sessions
 
@@ -64,11 +59,9 @@ azd ai agent monitor --session-id <id> --follow
 azd ai agent monitor --session-id <id> --type system
 ```
 
-`monitor` is the only investigate command that does not emit JSON --
-it's a stream surface, not a query surface. Use `--raw` to skip the
-formatter and consume the raw SSE.
+`monitor` is the only investigate command that does not emit JSON -- it's a stream surface, not a query surface. Use `--raw` to skip the formatter and consume the raw SSE.
 
-----------------------------------------------------------------------
+---
 
 ## Files in a session
 
@@ -82,13 +75,11 @@ azd ai agent files download <remote-path>
 azd ai agent files download <remote-path> --target-path ./local.csv
 ```
 
-`files list` and `files show` return JSON listings. `files stat` returns
-a single-file metadata record (size, mtime, content type). `files
-download` writes the file to disk -- read-only over the agent state.
+`files list` and `files show` return JSON listings. `files stat` returns a single-file metadata record (size, mtime, content type). `files download` writes the file to disk -- read-only over the agent state.
 
 Upload, mkdir, and delete are mutations -- see the `operate` topic.
 
-----------------------------------------------------------------------
+---
 
 ## Evals
 
@@ -123,10 +114,9 @@ azd ai agent eval show <eval-id> --eval-run-id <run-id> --output json
 }
 ```
 
-`eval show` for a specific run returns the full OpenAIEvalRun object
-under `.run` plus the eval id under `.eval`.
+`eval show` for a specific run returns the full OpenAIEvalRun object under `.run` plus the eval id under `.eval`.
 
-----------------------------------------------------------------------
+---
 
 ## Optimization jobs
 
@@ -161,10 +151,9 @@ azd ai agent optimize status <operation-id> --watch --output json
 }
 ```
 
-`statusFilter` echoes any `--status` filter you passed so the caller
-knows the result set is constrained.
+`statusFilter` echoes any `--status` filter you passed so the caller knows the result set is constrained.
 
-----------------------------------------------------------------------
+---
 
 ## Connections
 
@@ -173,10 +162,9 @@ azd ai agent connection list --output json
 azd ai agent connection show <name> --output json
 ```
 
-Connection write commands (create / update / delete) live in a separate
-package; see the `configure` topic.
+Connection write commands (create / update / delete) live in a separate package; see the `configure` topic.
 
-----------------------------------------------------------------------
+---
 
 ## Health check
 
@@ -186,10 +174,7 @@ When something is off but you can't pinpoint the cause:
 azd ai agent doctor --output json
 ```
 
-`doctor` runs a sequence of local + remote checks and returns a
-machine-readable `Report` with per-check status (`pass`, `warn`, `fail`,
-`skip`, `info`), suggestions, and links. Use `--local-only` to skip the
-network-dependent checks.
+`doctor` runs a sequence of local + remote checks and returns a machine-readable `Report` with per-check status (`pass`, `warn`, `fail`, `skip`, `info`), suggestions, and links. Use `--local-only` to skip the network-dependent checks.
 
 Exit codes:
 
@@ -197,19 +182,16 @@ Exit codes:
 - `1` -- any check failed.
 - `2` -- all checks were skipped (e.g. no project detected).
 
-----------------------------------------------------------------------
+---
 
 ## Common error codes you'll see while investigating
 
-- `session_not_found` -- session has already been deleted or never
-  existed. Re-list with `sessions list`.
+- `session_not_found` -- session has already been deleted or never existed. Re-list with `sessions list`.
 - `file_not_found` -- the remote path doesn't exist. Use `files list`.
-- `agent_definition_not_found` -- the deployed agent name doesn't match
-  azure.yaml. Re-deploy from the workspace root.
-- `eval_config_invalid` -- the local `eval.yaml` failed validation.
-  See `azd ai agent doctor` for the specific cause.
+- `agent_definition_not_found` -- the deployed agent name doesn't match azure.yaml. Re-deploy from the workspace root.
+- `eval_config_invalid` -- the local `eval.yaml` failed validation. See `azd ai agent doctor` for the specific cause.
 
-----------------------------------------------------------------------
+---
 
 ## What this topic does NOT cover
 

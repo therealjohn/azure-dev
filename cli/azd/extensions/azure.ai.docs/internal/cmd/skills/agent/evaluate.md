@@ -4,20 +4,13 @@ order: 35
 ---
 # Evaluate: generate, run, and iterate on evals
 
-Audience: an AI coding assistant testing a deployed agent end-to-end:
-generate an eval suite, run it, read the results, edit and rerun. This
-topic walks the full eval lifecycle as a single thread so the workflow
-reads top-to-bottom.
+Audience: an AI coding assistant testing a deployed agent end-to-end: generate an eval suite, run it, read the results, edit and rerun. This topic walks the full eval lifecycle as a single thread so the workflow reads top-to-bottom.
 
-Every command in this topic targets a DEPLOYED agent on Foundry. Run
-the `deploy` topic first if `azd ai agent show` returns
-`status: "not_deployed"`.
+Every command in this topic targets a DEPLOYED agent on Foundry. Run the `deploy` topic first if `azd ai agent show` returns `status: "not_deployed"`.
 
-Most write commands here are BILLED. They emit the standard
-confirmation envelope on `--no-prompt` without `--force`. See the
-`operate` topic for the envelope contract.
+Most write commands here are BILLED. They emit the standard confirmation envelope on `--no-prompt` without `--force`. See the `operate` topic for the envelope contract.
 
-----------------------------------------------------------------------
+---
 
 ## The lifecycle
 
@@ -49,7 +42,7 @@ azd ai agent eval list --output json
 azd ai agent eval show <eval-id> --output json
 ```
 
-----------------------------------------------------------------------
+---
 
 ## Step 1 -- Generate the eval suite
 
@@ -69,32 +62,21 @@ What this does:
 Useful flags:
 
 * `--agent <name>` -- target agent. Auto-detected from `azure.yaml`.
-* `--dataset <path-or-name>` -- skip dataset generation; use an
-  existing local file or a registered dataset.
-* `--evaluator <name>` (repeatable) -- skip evaluator generation; use
-  built-in or pre-registered evaluators.
+* `--dataset <path-or-name>` -- skip dataset generation; use an existing local file or a registered dataset.
+* `--evaluator <name>` (repeatable) -- skip evaluator generation; use built-in or pre-registered evaluators.
 * `--max-samples <n>` -- generated dataset size (15-1000).
-* `--gen-instruction "<text>"` / `--gen-instruction-file <path>` --
-  override the agent instruction used during generation.
-* `--trace-days <n>` -- include the last N days of real agent traces
-  in evaluator generation (0 = no traces).
-* `--eval-model <name>` -- model used for evaluator generation. Pick
-  from `azd ai agent connection list`.
-* `--no-wait` -- submit jobs and exit without polling; the OP IDs are
-  written into `eval.yaml` for later resolution.
+* `--gen-instruction "<text>"` / `--gen-instruction-file <path>` -- override the agent instruction used during generation.
+* `--trace-days <n>` -- include the last N days of real agent traces in evaluator generation (0 = no traces).
+* `--eval-model <name>` -- model used for evaluator generation. Pick from `azd ai agent connection list`.
+* `--no-wait` -- submit jobs and exit without polling; the OP IDs are written into `eval.yaml` for later resolution.
 * `--reset-defaults` -- overwrite an existing `eval.yaml`.
-* `--out-file <path>` -- write `eval.yaml` somewhere other than the
-  agent project root.
+* `--out-file <path>` -- write `eval.yaml` somewhere other than the agent project root.
 
-Confirmation envelope: this is BILLED, so `--no-prompt` without
-`--force` returns exit 2 with the standard envelope. Summarize
-`changes[]` for the human and re-run `confirmCommand` after consent.
+Confirmation envelope: this is BILLED, so `--no-prompt` without `--force` returns exit 2 with the standard envelope. Summarize `changes[]` for the human and re-run `confirmCommand` after consent.
 
-If `--no-wait` was used, the resulting `eval.yaml` contains
-`pendingOperations:` blocks. Re-run `eval init` once they complete to
-materialize the artifacts.
+If `--no-wait` was used, the resulting `eval.yaml` contains `pendingOperations:` blocks. Re-run `eval init` once they complete to materialize the artifacts.
 
-----------------------------------------------------------------------
+---
 
 ## Step 2 -- Run the eval
 
@@ -107,21 +89,17 @@ What this does:
 
 * Reads `eval.yaml` from the agent project root.
 * Submits an eval run (billed).
-* Polls until the run completes (default) and prints the result
-  summary.
+* Polls until the run completes (default) and prints the result summary.
 
 Useful flags:
 
 * `--config <path>` -- explicit `eval.yaml` location.
-* `--name <name>` -- override the eval run name (defaults to the
-  config's eval name).
-* `--no-wait` -- start the run and return immediately. Use
-  `eval show --eval-run-id <id>` later to fetch results.
+* `--name <name>` -- override the eval run name (defaults to the config's eval name).
+* `--no-wait` -- start the run and return immediately. Use `eval show --eval-run-id <id>` later to fetch results.
 
-Each `eval run` is BILLED -- the envelope describes the agent and
-dataset that will be exercised.
+Each `eval run` is BILLED -- the envelope describes the agent and dataset that will be exercised.
 
-----------------------------------------------------------------------
+---
 
 ## Step 3 -- Inspect results
 
@@ -164,26 +142,20 @@ azd ai agent eval list --output json
 }
 ```
 
-`eval show` with `--eval-run-id` returns the full OpenAIEvalRun object
-under `.run` plus the eval id under `.eval`. Use `-O <file>` when the
-payload is large (full per-sample traces).
+`eval show` with `--eval-run-id` returns the full OpenAIEvalRun object under `.run` plus the eval id under `.eval`. Use `-O <file>` when the payload is large (full per-sample traces).
 
-----------------------------------------------------------------------
+---
 
 ## Step 4 -- Edit and update
 
-When you change a dataset file (JSONL) or an evaluator rubric file
-locally and want the next run to use the new versions:
+When you change a dataset file (JSONL) or an evaluator rubric file locally and want the next run to use the new versions:
 
 ```bash
 azd ai agent eval update --dry-run
 azd ai agent eval update --force
 ```
 
-Default behavior: detect every asset that has local changes (dataset
-JSONL files referenced via `local_uri:` and evaluator rubric files
-referenced via `local_uri:`), upload new versions, and rewrite the
-version numbers in `eval.yaml`.
+Default behavior: detect every asset that has local changes (dataset JSONL files referenced via `local_uri:` and evaluator rubric files referenced via `local_uri:`), upload new versions, and rewrite the version numbers in `eval.yaml`.
 
 Useful flags:
 
@@ -191,24 +163,18 @@ Useful flags:
 * `--evaluator-only` -- skip the dataset.
 * `--config <path>` -- explicit `eval.yaml` location.
 
-This is BILLED (uploads create new versions). The envelope lists
-exactly which assets will get new versions.
+This is BILLED (uploads create new versions). The envelope lists exactly which assets will get new versions.
 
 After `eval update`, re-run `eval run` to exercise the new versions.
 
-----------------------------------------------------------------------
+---
 
 ## Local edits round-trip
 
-`eval.yaml` is the source of truth for which dataset and evaluators a
-run uses. Two common patterns:
+`eval.yaml` is the source of truth for which dataset and evaluators a run uses. Two common patterns:
 
-1. **Edit dataset directly** -- `local_uri:` in the dataset block points
-   at a JSONL file in the repo. Add/remove samples, save, then
-   `eval update --dataset-only --force`.
-2. **Add a custom evaluator** -- append an evaluator block to
-   `eval.yaml` with `local_uri:` pointing at a rubric file; run
-   `eval update --evaluator-only --force` to upload it.
+1. **Edit dataset directly** -- `local_uri:` in the dataset block points at a JSONL file in the repo. Add/remove samples, save, then `eval update --dataset-only --force`.
+2. **Add a custom evaluator** -- append an evaluator block to `eval.yaml` with `local_uri:` pointing at a rubric file; run `eval update --evaluator-only --force` to upload it.
 
 Validate before committing:
 
@@ -218,23 +184,19 @@ azd ai agent doctor --output json
 
 Look for the `eval-config-valid` check; failures name the field path.
 
-----------------------------------------------------------------------
+---
 
 ## Cross-link: optimize
 
-The `optimize` subgroup ALSO submits billed jobs (see `operate`) and
-shares the same evaluator + dataset definitions. After a clean eval
-baseline:
+The `optimize` subgroup ALSO submits billed jobs (see `operate`) and shares the same evaluator + dataset definitions. After a clean eval baseline:
 
 ```bash
 azd ai agent optimize --target instruction --force
 ```
 
-submits an optimization run that uses the active eval to score
-candidate prompt instructions. The optimization deeper-dive lives in
-`operate` (write side) and `investigate` (read side).
+submits an optimization run that uses the active eval to score candidate prompt instructions. The optimization deeper-dive lives in `operate` (write side) and `investigate` (read side).
 
-----------------------------------------------------------------------
+---
 
 ## Common eval error codes
 
@@ -246,11 +208,10 @@ candidate prompt instructions. The optimization deeper-dive lives in
 | `dataset_pending`     | A pending dataset job is still running           | Wait, re-run `eval init` without `--no-wait` to materialize  |
 | `evaluator_pending`   | A pending evaluator job is still running         | Wait, re-run `eval init` without `--no-wait` to materialize  |
 
-----------------------------------------------------------------------
+---
 
 ## What this topic does NOT cover
 
-* Optimization commands -- see `operate` (write side) and
-  `investigate` (read side).
+* Optimization commands -- see `operate` (write side) and `investigate` (read side).
 * Deploying the agent under test -- see `deploy`.
 * Editing the agent's `agent.yaml` -- see `extend`.
