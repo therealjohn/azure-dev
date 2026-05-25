@@ -32,6 +32,7 @@ words:
   - asyncio
   - streamablehttp
   - streamable
+  - httpx
   # Plain English used in shipped toolbox topic
   - uppercased
 overrides:

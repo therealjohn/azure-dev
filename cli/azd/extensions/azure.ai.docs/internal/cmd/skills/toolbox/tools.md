@@ -4,7 +4,7 @@ order: 30
 ---
 # Toolbox tool types
 
-Reference for entries inside `azure.yaml services.<name>.config.toolboxes[].tools[]`. Two flavors: **built-in** (no connection) and **custom** (needs `project_connection_id` pointing at a connection in the same service config).
+Reference for entries inside `azure.yaml services.<name>.config.toolboxes[].tools[]`. Three flavors: **built-in** (no connection), **connection-bound** (need `project_connection_id`), and **custom** (need an endpoint + connection). Plus one directive (`toolbox_search_preview`) that changes how tools are surfaced.
 
 For recipes, see `add`. For connection setup, see `azd ai doc connection`.
 
@@ -12,96 +12,142 @@ For recipes, see `add`. For connection setup, see `azd ai doc connection`.
 
 Pre-configured capabilities Foundry runs for you. Drop them into `tools[]` with just a `type:` (and optional `name:` / `description:`).
 
-| `type:`            | Fields                                                    | What it does                                                            |
-| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `web_search`       | `name?`, `description?`                                   | Bing web search; returns answers with inline citations.                 |
-| `code_interpreter` | `name?`, `description?`                                   | Sandboxed Python execution. Useful for data analysis and charts.        |
-| `file_search`      | `name?`, `description?`                                   | Vector-search over files in the agent's session filesystem.             |
-| `function`         | `name`, `description`, JSON-Schema `parameters`           | Local function the agent calls; your application executes the function. |
+| `type:`            | Optional fields                                                          | What it does                                                              |
+| ------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `web_search`       | `name`, `description`, `web_search.custom_search_configuration`          | Web search via Bing grounding by default. Add a custom Bing Search connection through `custom_search_configuration` if you have one. |
+| `code_interpreter` | `name`, `description`, `container.type` (`auto`), `container.file_ids[]` | Sandboxed Python execution.                                               |
+| `file_search`      | `name`, `description`, **`file_search.vector_store_ids[]` (required)**   | Vector search over a pre-created vector store. The IDs must reference vector stores already in the Foundry project (create them via `POST {project_endpoint}/openai/v1/vector_stores`). |
+| `function`         | `name`, `description`, JSON-Schema `parameters`                          | Local function the agent calls; your application executes it.             |
 
-Caveat: a toolbox supports at most ONE built-in tool of a given `type:` without a `name:`. To include multiple `web_search` (or any other) instances, give each a unique `name`.
+Caveat: a toolbox supports at most ONE built-in tool of a given `type:` without a `name:`. To include multiple instances of the same type, give each a unique `name`.
+
+Caveat (hosted): `code_interpreter` and `file_search` do NOT support per-user isolation when accessed through a toolbox in a Hosted agent. All users in the same project share the same container / vector store. Use the direct (non-toolbox) tool form when isolation matters.
 
 ## Connection-bound built-ins
 
-Same idea as built-in, but Foundry needs a connection to know which Azure resource to query. The connection must exist on the project (declared in `connections[]` or pre-existing).
+Same shape as built-in, but Foundry needs a connection for credentials / endpoint.
 
-| `type:`           | Required fields                                            | Connection category   | Notes                                                            |
-| ----------------- | ---------------------------------------------------------- | --------------------- | ---------------------------------------------------------------- |
-| `azure_ai_search` | `project_connection_id`                                    | `CognitiveSearch`     | Index name lives in connection `metadata.indexName`.             |
-| `bing_grounding`  | `project_connection_id`                                    | `GroundingWithBingSearch` | More structured than `web_search`; gives Bing-style grounding citations. |
+### `type: azure_ai_search`
 
-Both can also live outside a toolbox as a top-level `resources[]` entry (`{ resource, connectionName }`) -- equivalent behavior. Pick the toolbox form when you want all tools discoverable through the same MCP endpoint.
+```yaml
+- type: azure_ai_search
+  name: my-search                 # optional
+  description: Search the docs corpus.
+  index_name: contoso-outdoors    # required
+  project_connection_id: my-search-conn   # required
+  # Optional: top_k (default 5), query_type (default vector_semantic_hybrid),
+  # filter (applies to all queries).
+```
+
+Required: `type`, `index_name`, `project_connection_id`. Connection category: `CognitiveSearch`. `query_type` accepts `simple`, `vector`, `semantic`, `vector_simple_hybrid`, `vector_semantic_hybrid`.
+
+Results include chunk metadata at `result.structuredContent.documents[]` (`title`, `url`, `id`, `score`).
+
+### `type: bing_custom_search`
+
+```yaml
+- type: bing_custom_search
+  custom_search_configuration:
+    instance_name: your-bing-custom-instance
+  project_connection_id: bing-custom-conn
+```
+
+For a scoped Bing Custom Search instance. Connection category: `GroundingWithCustomSearch` (or `GroundingWithBingSearch` for a non-custom instance). Plain web search (no custom instance) uses `type: web_search` and needs no connection.
+
+`bing_grounding` is NOT a valid toolbox tool type -- it only works at the agent's top level (a `resources[]` entry with `{ resource: bing_grounding, connectionName: <name> }`; see `azd ai doc agent configure`).
 
 ## Custom tools
 
-Bring your own endpoint. Each requires a connection reference; the connection holds the URL + auth and Foundry injects credentials at call time.
+Bring your own endpoint. The connection holds the URL + auth; Foundry injects credentials at call time.
 
 ### `type: mcp`
 
-Most common custom tool. Connects to an MCP server.
-
 ```yaml
 - type: mcp
-  server_label: github                   # short identifier the model sees
-  server_url: https://api.example.com/mcp   # OPTIONAL -- auto-filled from connection.target at deploy
-  project_connection_id: github-mcp-conn
+  server_label: github                       # short identifier the model sees
+  server_url: https://api.example.com/mcp    # required for unauthenticated; auto-filled from connection.target at deploy when project_connection_id is set
+  project_connection_id: github-mcp-conn     # omit for public / anonymous MCP
   description: GitHub repo operations
-  require_approval: never                # or "always" / detailed approval policy
-  allowed_tools: [search, get_file]      # optional allowlist of MCP tool names
+  require_approval: never                    # "always" or "never"
+  allowed_tools: [search, get_file]          # optional allowlist of MCP tool names
 ```
 
-Required: `type`, `project_connection_id`. Everything else is optional. Connection category is usually `RemoteTool`.
+Connection category: usually `RemoteTool`. Supported auth types: `CustomKeys` (API key in header), `OAuth2` (managed connector or your own app), `AgenticIdentity`, `UserEntraToken`, `None`. See `azd ai doc connection add` for per-auth recipes.
+
+**Important about `require_approval`**: the toolbox MCP proxy does NOT enforce this. It's a directive your agent runtime must read from each tool's `_meta.tool_configuration` block and gate the call accordingly. `"always"` -> ask the user before every invocation; `"never"` -> invoke freely. The first OAuth call returns `CONSENT_REQUIRED` (code `-32007`) with a consent URL -- the agent runtime opens it in a browser and retries.
+
+**Tool name prefixing**: at runtime, MCP tool names are prefixed with `server_label`. A tool `get_info` on `server_label: myserver` is exposed as `myserver.get_info`. (The Copilot SDK rejects dots and replaces them with underscores -- `myserver_get_info`. Other runtimes pass dots through.)
 
 `mcp` here means YOUR agent calls out to an MCP server. It is NOT related to `azd ai agent mcp start`, which exposes the CLI itself to IDEs.
 
 ### `type: openapi`
 
-Generic HTTP API described by an OpenAPI 3.0 / 3.1 spec.
-
 ```yaml
 - type: openapi
-  project_connection_id: contoso-api-conn
-  description: Contoso billing API
-  # The OpenAPI spec file lives in your agent source and gets uploaded at deploy.
+  openapi:                                   # all OpenAPI config nests under this key
+    name: my-api
+    spec:                                    # the full OpenAPI 3.0 / 3.1 spec, inline
+      openapi: "3.0.1"
+      info: { title: "My API", version: "1.0" }
+      servers: [{ url: https://api.example.com/v1 }]
+      paths:
+        /search:
+          get:
+            operationId: search
+            parameters:
+              - { name: query, in: query, required: true, schema: { type: string } }
+            responses:
+              "200": { description: OK }
+    auth:
+      type: connection_auth                  # or "anonymous" / "managed_identity"
+      connection_id: api-conn
 ```
 
-Required: `type`, `project_connection_id`. Connection category depends on the API's auth (`ApiKey`, `CustomKeys`, `OAuth2`).
+Required: `type`, `openapi.name`, `openapi.spec`, `openapi.auth.type`. Connection category for `connection_auth` typically `CustomKeys` or `OAuth2`.
+
+`auth.type` values:
+
+* `anonymous` -- no auth.
+* `connection_auth` -- pulls credentials from `connection_id` (a Foundry connection name).
+* `managed_identity` -- needs `security_scheme.audience`. The Foundry project's managed identity calls the API; grant it the right RBAC role on the target service first.
 
 ### `type: a2a_preview`
 
-Delegate to another deployed agent over the A2A protocol.
-
 ```yaml
 - type: a2a_preview
+  name: calc-agent                           # optional
+  description: Hand off complex math.
   project_connection_id: peer-agent-conn
-  description: Hand off complex math to the calc-agent.
+  # Optional: base_url override (otherwise sourced from the connection's target).
 ```
 
-Required: `type`, `project_connection_id`. Connection category usually `RemoteTool` with `ProjectManagedIdentity` auth.
+Required: `type`, `project_connection_id`. Connection category: `RemoteA2A` (or `RemoteTool`). Common auth types: `None` (anonymous), `ProjectManagedIdentity`, `AgenticIdentity`.
 
-### `type: tool_search`
+## Tool Search directive
 
-Searches a registry of tools and dynamically loads matches -- helpful when an agent shouldn't preload every tool. Newer / less common; consult the Foundry tool catalog for current field set.
+```yaml
+- type: toolbox_search_preview
+```
 
-## Universal fields
+Activates intent-based tool routing. The platform picks the most relevant subset of the toolbox's tools for each request instead of exposing every tool to the model at once. Doesn't appear in `tools/list` responses; doesn't count toward the one-unnamed-per-type limit.
 
-Every tool entry accepts these regardless of `type`:
+## Universal optional fields
 
-| Field         | What it does                                                                                       |
-| ------------- | -------------------------------------------------------------------------------------------------- |
-| `name`        | Unique identifier within the toolbox. Required when including multiple built-ins of the same type. |
+| Field         | What it does                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `name`        | Unique within the toolbox. Required when including multiple instances of the same built-in `type`.          |
 | `description` | Free-text -- the MODEL reads this to choose between tools. Always add one when the toolbox has more than one tool. |
 
-## What azd does to your tool entry at deploy
+## What azd fills in at deploy
 
-`provisionToolboxes` (called as a post-deploy hook) walks each tool and:
+`provisionToolboxes` (post-deploy hook) walks each tool entry and:
 
-1. Resolves `${VAR}` references in every string value against the azd environment.
+1. Resolves `${VAR}` references in every string value against the active azd environment.
 2. For tools with `project_connection_id`: fills in `server_url` from the matching connection's `target` (if not already set) and `server_label` from the connection's `name` (if not already set).
-3. Replaces `project_connection_id` (a friendly name) with the connection's ARM resource ID (resolved from the Bicep output `AI_PROJECT_CONNECTION_IDS_JSON`).
-4. POSTs the resulting tool list to `{project}/toolboxes/{name}/versions?api-version=v1` with the `Foundry-Features: Toolboxes=V1Preview` header.
+3. Replaces `project_connection_id` (a friendly name) with the connection's ARM resource ID (from Bicep output `AI_PROJECT_CONNECTION_IDS_JSON`).
+4. POSTs the resulting tool list to `{project_endpoint}/toolboxes/{name}/versions?api-version=v1` with the `Foundry-Features: Toolboxes=V1Preview` header.
 
-This means you can write minimal entries in `azure.yaml` -- `type` + `project_connection_id` is enough for `mcp` / `openapi` / `a2a_preview` -- and the deploy fills the rest in.
+You can write minimal entries in `azure.yaml` -- `type` + `project_connection_id` is enough for `mcp` / `a2a_preview` -- and the deploy fills the rest in.
 
 ## Reference
 
