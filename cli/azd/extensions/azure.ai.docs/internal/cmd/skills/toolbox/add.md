@@ -13,10 +13,44 @@ For the mental model and lifecycle, see `overview`. For the full tool-type refer
 After any recipe:
 
 ```bash
-azd provision     # creates / updates connections referenced by toolbox tools
+azd provision     # only needed when the recipe adds a NEW connection (no connection in this deploy? skip)
 azd deploy        # creates a new toolbox version, updates TOOLBOX_<NAME>_MCP_ENDPOINT
 azd ai agent invoke "..."     # smoke test
 ```
+
+## Post-init: adding a tool to an existing agent
+
+When you're modifying a project that already passed `azd ai agent init`, do these three checks before applying any recipe below. Init handles them automatically for greenfield projects; for post-init edits they're on you.
+
+**1. Existing toolbox? Merge instead of creating a new one.** Read `azure.yaml` first. If `services.<name>.config.toolboxes[]` already has a toolbox, append the new tool to its `tools[]` array instead of creating a second toolbox. One toolbox per agent is the simpler default unless you have a reason to split.
+
+```yaml
+# BEFORE -- existing toolbox
+toolboxes:
+  - name: agent-tools
+    tools:
+      - type: code_interpreter
+
+# AFTER -- web_search appended to the same toolbox
+toolboxes:
+  - name: agent-tools
+    tools:
+      - type: code_interpreter
+      - type: web_search
+```
+
+**2. Env-var reference in `<service>/agent.yaml`.** The deployed agent reads the toolbox MCP URL from `TOOLBOX_<NAME>_MCP_ENDPOINT`. Init wires this reference into `agent.yaml` for you; post-init, check and add it yourself if missing:
+
+```yaml
+# In <service>/agent.yaml under environment_variables
+environment_variables:
+  - name: TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT
+    value: ${TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT}
+```
+
+Name rule: uppercase the toolbox name and collapse non-alphanumeric to `_`. `agent-tools` -> `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`. Adding tools to an existing toolbox does NOT need a new env-var entry -- one per toolbox is enough.
+
+**3. Skip `azd provision` when no new connection was added.** Recipes that wire a `kind: connection` need `azd provision` to create the Bicep resource. Recipes that only touch `toolboxes[].tools[]` (web search, code interpreter, file search, an MCP tool against an EXISTING connection) only need `azd deploy`.
 
 ## Web search only (no connection)
 
@@ -44,7 +78,7 @@ services:
             - type: web_search
 ```
 
-No connection, no env vars. Init adds the `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT` reference to the on-disk `agent.yaml` automatically.
+No connection. No `azd provision` step needed -- straight to `azd deploy` (after the Post-init checks above for an existing project).
 
 ## Bing Custom Search
 
