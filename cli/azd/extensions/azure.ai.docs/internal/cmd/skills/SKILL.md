@@ -1,7 +1,7 @@
 ---
 name: azd-ai-skill
 description: Set up, scaffold, configure, deploy, evaluate, and operate AI agents on Microsoft Foundry using the Azure Developer CLI (azd) and the azure.ai.agents extension. USE FOR azd ai agent, azd ai toolbox, foundry agent, agent.yaml, azure.yaml service config, hosted agent, deploying agents to Azure, running an agent locally, evaluating an agent, optimizing an agent, adding a tool to an agent, web search, code interpreter, file search, function tool, MCP server, OpenAPI tool, A2A peer agent, Azure AI Search RAG, Bing grounding, Bing Custom Search, toolbox, toolbox version, toolbox connection, connection, RemoteTool, CognitiveSearch, RemoteA2A, GroundingWithCustomSearch, OAuth2, UserEntraToken, AgenticIdentity, ProjectManagedIdentity, ApiKey, CustomKeys, model deployment, Foundry project endpoint. DO NOT USE FOR generic Azure CLI tasks unrelated to Foundry, or LLM application code that does not deploy to a Foundry hosted agent.
-allowed-tools: ["azd", "azd ai agent", "azd ai toolbox", "azd ai doc", "azd version", "azd extension list", "azd auth login", "azd config get defaults", "azd env get-values"]
+allowed-tools: ["azd", "azd ai agent", "azd ai toolbox", "azd ai connection", "azd ai doc", "azd version", "azd extension list", "azd auth login", "azd config get defaults", "azd env get-values"]
 ---
 # AZD AI skill
 
@@ -26,7 +26,9 @@ azd ai agent show --output json
 
 Branch on `show`'s `.status`:
 
-* `active` / `deployed` -> jump to `investigate` (diagnose) or `operate` (change remote state).
+* `active` / `deployed`, the developer wants to **diagnose or change remote state** -> `investigate` or `operate`.
+* `active` / `deployed`, the developer wants to **add a new tool, toolbox, or connection** -> read `azd ai doc toolbox add` and `azd ai doc connection add` / `manage`. **`azd deploy` does NOT create or update toolboxes for post-init projects** -- you must run `azd ai toolbox create` / `connection add` yourself, then set the `TOOLBOX_<NAME>_MCP_ENDPOINT` env var, then `azd deploy` so the agent picks the URL up.
+* `active` / `deployed`, the developer wants to **change agent code or local config** -> `configure` / `extend`, then `develop` to iterate locally before redeploying.
 * `not_deployed` with `next_step.suggestions[]` -> run the suggested command. For a greenfield init, always start with `azd ai agent sample list --output json` to pick a `manifestUrl`, then `azd ai agent init -m <manifestUrl>`. Use `--from-code` only when the cwd already has hand-written agent source.
 * Anything else -> `azd ai agent doctor --output json` and surface failing checks.
 

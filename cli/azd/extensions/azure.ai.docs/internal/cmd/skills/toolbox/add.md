@@ -23,7 +23,10 @@ For the lifecycle, see `overview`. For per-category field reference, see `tools`
 
 When you're modifying an existing project to add a tool, do these three checks before applying any recipe below:
 
-**1. Connection exists on the project.** `azd ai agent connection list --output json` should show the connection name you'll pass to the toolbox CLI. If not, create it first (see `azd ai doc connection add`).
+**1. Connection exists on the project.** `azd ai agent connection list --output json` should show the connection name you'll pass to the toolbox CLI. If not, create it first. Two paths:
+
+* **Imperative (recommended for post-init, especially `--from-code` projects with no `infra/` folder):** `azd ai agent connection create <name> --kind <category> --target <url> --auth-type <type> ...` -- see `azd ai doc connection manage` for the full flag matrix.
+* **Declarative:** add the connection to `azure.yaml services.<name>.config.connections[]` and run `azd provision`. This requires an `infra/` folder; it fails on code-first projects. See `azd ai doc connection add`.
 
 **2. Toolbox exists or not?** `azd ai toolbox list --output json`.
 
@@ -36,20 +39,20 @@ Each call publishes a new version that becomes the default.
 
 ```bash
 ENDPOINT=$(azd ai toolbox show my-toolbox --output json | jq -r .endpoint)
-azd env set TOOLBOX_MY_TOOLBOX_ENDPOINT "$ENDPOINT"
+azd env set TOOLBOX_MY_TOOLBOX_MCP_ENDPOINT "$ENDPOINT"
 ```
 
-(Name rule: uppercase the toolbox name and collapse non-alphanumeric to `_`. `my-toolbox` -> `TOOLBOX_MY_TOOLBOX_ENDPOINT`.)
+(Name rule: uppercase the toolbox name and collapse non-alphanumeric to `_`, then append `_MCP_ENDPOINT`. `my-toolbox` -> `TOOLBOX_MY_TOOLBOX_MCP_ENDPOINT`.)
 
 If the agent's `agent.yaml` doesn't already reference the env var under `environment_variables[]`, add it:
 
 ```yaml
 environment_variables:
-  - name: TOOLBOX_MY_TOOLBOX_ENDPOINT
-    value: ${TOOLBOX_MY_TOOLBOX_ENDPOINT}
+  - name: TOOLBOX_MY_TOOLBOX_MCP_ENDPOINT
+    value: ${TOOLBOX_MY_TOOLBOX_MCP_ENDPOINT}
 ```
 
-Then `azd deploy` so the deployed agent picks up the new env var.
+Then `azd deploy` so the deployed agent picks up the new env var. `azd deploy` itself does NOT create the toolbox on Foundry -- you must have run `azd ai toolbox create` / `connection add` first.
 
 ## GitHub MCP via Personal Access Token
 
@@ -102,7 +105,7 @@ azd ai toolbox connection add agent-tools github-mcp-conn
 
 ```bash
 ENDPOINT=$(azd ai toolbox show agent-tools --output json | jq -r .endpoint)
-azd env set TOOLBOX_AGENT_TOOLS_ENDPOINT "$ENDPOINT"
+azd env set TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT "$ENDPOINT"
 ```
 
 ## Azure AI Search RAG
@@ -176,13 +179,15 @@ azd env set PARAM_BING_CUSTOM_CONN_KEY "<bing-api-key>"
 azd provision
 ```
 
+> `azd provision` requires an `infra/` folder with Bicep / Terraform. Code-first projects scaffolded by `azd ai agent init --from-code` don't have one, and provision will fail with a Bicep error. For those projects, create the connection via the portal or Bicep deployed out-of-band; the agent CLI doesn't yet support creating `GroundingWithCustomSearch` connections.
+
 **CLI -- attach with the required `--instance-name`:**
 
 ```bash
 azd ai toolbox connection add agent-tools bing-custom-conn --instance-name docs-config
 ```
 
-For plain web search (no custom Bing instance), the toolbox CLI can't help today -- `web_search` is a built-in tool that the toolbox CLI doesn't expose. Use the SDK / REST flow if you need that inside a toolbox, or call `WebSearchTool()` directly in your agent code outside of any toolbox.
+For plain web search (no custom Bing instance), the toolbox CLI can't help today -- `web_search` is a built-in tool that the toolbox CLI doesn't expose, and `azd ai toolbox create --from-file` rejects a file with zero connections, so a web_search-only toolbox is not creatable via this CLI. Workarounds: (a) bundle `web_search` alongside a real connection-backed tool through the SDK / REST API, or (b) call `WebSearchTool()` directly in your agent code outside of any toolbox.
 
 ## A2A peer agent
 
@@ -239,7 +244,7 @@ The `azd ai toolbox` CLI only handles **connection-backed tools** (RemoteTool / 
 * `function`
 * `toolbox_search_preview`
 
-If you need any of these inside a toolbox, create the toolbox version through the Python / .NET / JavaScript SDK or the REST API. The `azure.yaml services.<name>.config.toolboxes[].tools[]` block can still record them as the declarative shape, but the azd CLI won't push them to Foundry.
+Because `azd ai toolbox create --from-file` requires `connections[]` to be non-empty, a toolbox composed only of built-in tools cannot be created via the CLI -- you'd hit a "no connections" validation error. To include any built-in tool in a toolbox today, you must either bundle it alongside a real connection-backed tool through the Python / .NET / JavaScript SDK or POST directly to the REST API. The `azure.yaml services.<name>.config.toolboxes[].tools[]` block can still record built-ins as the declarative shape, but the azd CLI won't push them to Foundry.
 
 ## Remove a connection from a toolbox
 

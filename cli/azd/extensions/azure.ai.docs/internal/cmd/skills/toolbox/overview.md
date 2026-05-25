@@ -68,7 +68,7 @@ The toolbox derives the tool kind from the connection's category. You don't writ
 | Create connections   | Imperative (`azd ai agent connection create`) or declarative (`azd provision` after editing `azure.yaml`). |
 | `toolbox create`     | Publishes the initial version. Toolbox is created if it didn't exist. First version is the default. |
 | `toolbox connection add` / `remove` | Each call publishes a new version and promotes it to default.                                  |
-| Agent reads endpoint | Run `azd ai toolbox show <name>`; copy the `Endpoint` field; `azd env set TOOLBOX_<NAME>_ENDPOINT "<url>"`. The deployed agent reads the env var. |
+| Agent reads endpoint | Run `azd ai toolbox show <name>`; copy the `Endpoint` field; `azd env set TOOLBOX_<NAME>_MCP_ENDPOINT "<url>"`. The deployed agent reads the env var. |
 | Subsequent updates   | Re-run `toolbox connection add` / `remove` -- the new version becomes the default automatically, so the same env var URL keeps serving the latest. (Or pin a specific version via `--version` on `show` and don't auto-promote.) |
 
 ## agent.yaml `kind: toolbox` -- the declarative shape

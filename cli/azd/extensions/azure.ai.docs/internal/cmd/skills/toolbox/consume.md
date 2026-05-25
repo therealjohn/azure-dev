@@ -10,20 +10,20 @@ For the toolbox-side definition (creating one with `azd ai toolbox`), see `add`.
 
 ## The env var convention
 
-The agent reads the toolbox URL from an env var. The convention is `TOOLBOX_<NAME>_ENDPOINT`, where `<NAME>` is the toolbox name uppercased with non-alphanumeric characters collapsed to `_`.
+The agent reads the toolbox URL from an env var. The convention is `TOOLBOX_<NAME>_MCP_ENDPOINT`, where `<NAME>` is the toolbox name uppercased with non-alphanumeric characters collapsed to `_`.
 
-| Toolbox name      | Convention env var                |
-| ----------------- | --------------------------------- |
-| `agent-tools`     | `TOOLBOX_AGENT_TOOLS_ENDPOINT`    |
-| `my-toolbox`      | `TOOLBOX_MY_TOOLBOX_ENDPOINT`     |
-| `agent.tools.v2`  | `TOOLBOX_AGENT_TOOLS_V2_ENDPOINT` |
-| `Web-Search:V2`   | `TOOLBOX_WEB_SEARCH_V2_ENDPOINT`  |
+| Toolbox name      | Convention env var                    |
+| ----------------- | ------------------------------------- |
+| `agent-tools`     | `TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT`    |
+| `my-toolbox`      | `TOOLBOX_MY_TOOLBOX_MCP_ENDPOINT`     |
+| `agent.tools.v2`  | `TOOLBOX_AGENT_TOOLS_V2_MCP_ENDPOINT` |
+| `Web-Search:V2`   | `TOOLBOX_WEB_SEARCH_V2_MCP_ENDPOINT`  |
 
 `azd ai toolbox` does NOT auto-populate this env var today. You do it yourself after running `azd ai toolbox show`:
 
 ```bash
 ENDPOINT=$(azd ai toolbox show agent-tools --output json | jq -r .endpoint)
-azd env set TOOLBOX_AGENT_TOOLS_ENDPOINT "$ENDPOINT"
+azd env set TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT "$ENDPOINT"
 ```
 
 Also add a reference in the agent's on-disk `agent.yaml` so the deployed container reads it:
@@ -31,8 +31,8 @@ Also add a reference in the agent's on-disk `agent.yaml` so the deployed contain
 ```yaml
 # <service>/agent.yaml under environment_variables
 environment_variables:
-  - name: TOOLBOX_AGENT_TOOLS_ENDPOINT
-    value: ${TOOLBOX_AGENT_TOOLS_ENDPOINT}
+  - name: TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT
+    value: ${TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT}
 ```
 
 Then `azd deploy` so the deployed agent picks up the new env var.
@@ -68,8 +68,9 @@ Foundry's toolbox MCP endpoint has a couple of quirks. With a generic MCP client
 
 * **Always stream.** Non-streaming mode is NOT supported. Use the streamable HTTP transport.
 * **Don't call `prompts/list`.** Foundry's server doesn't implement it; the call returns `500`. Many MCP clients call it automatically at startup -- pass `load_prompts=False` (or the equivalent option) to disable.
-* **Don't call `send_ping()`.** Same reason. Microsoft Agent Framework's `MCPStreamableHTTPTool._ensure_connected()` does this automatically; override it.
+* **Generic clients: don't call `send_ping()`.** Same reason. Microsoft Agent Framework's `MCPStreamableHTTPTool._ensure_connected()` already catches the failure and sets `_ping_available = False` on its own, so Agent Framework users don't need to do anything. Generic MCP clients that hard-fail on ping need an override.
 * **MCP tool names are prefixed with `server_label`.** A tool `get_info` on `server_label: myserver` is exposed as `myserver.get_info`. GitHub Copilot SDK rejects dots in tool names -- the bridge must map `myserver.get_info` <-> `myserver_get_info`.
+* **Approval gating is the client's job, not the proxy's.** Many MCP servers (GitHub MCP, others) declare `require_approval: always` on every tool. The Foundry toolbox proxy does NOT enforce this -- it forwards `tools/call` unconditionally -- but Agent Framework's `MCPStreamableHTTPTool` defaults to "require approval", which silently blocks tool calls (empty response, no error). Either pass `approval_mode="never_require"` to allow auto-invocation, or wire up an approval handler. See **Handling `require_approval`** below.
 
 ## Two consumption patterns
 
@@ -81,7 +82,7 @@ Use when: writing a hosted agent against the Foundry Responses API, or you want 
 
 ### Client-side (the agent code calls MCP directly)
 
-Your agent reads `TOOLBOX_<NAME>_ENDPOINT`, opens an MCP session, lists the tools, and includes them in its own tool-calling loop (LangGraph, LangChain, Agent Framework, GitHub Copilot SDK, custom code).
+Your agent reads `TOOLBOX_<NAME>_MCP_ENDPOINT`, opens an MCP session, lists the tools, and includes them in its own tool-calling loop (LangGraph, LangChain, Agent Framework, GitHub Copilot SDK, custom code).
 
 Use when: bringing your own runtime, or you want fine-grained control over tool invocation, approval policies, or post-processing.
 
@@ -95,7 +96,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession
 
 async def main():
-    url = os.environ["TOOLBOX_AGENT_TOOLS_ENDPOINT"]
+    url = os.environ["TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT"]
     token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
     headers = {
         "Authorization": f"Bearer {token}",
@@ -140,16 +141,34 @@ Inspect each tool's `inputSchema` (returned by `tools/list`) to confirm the exac
 
 For MCP tools, each `tools/list` entry includes `_meta.tool_configuration.require_approval`. Values:
 
-* `"always"` -- the agent runtime must prompt the user for confirmation before EVERY invocation.
+* `"always"` -- the agent runtime must prompt the user for confirmation before EVERY invocation. Many servers (GitHub MCP and others) default to this for every tool.
 * `"never"` -- the agent can invoke freely.
 
 The toolbox MCP proxy does NOT enforce this -- it always executes `tools/call`. Gating is your agent runtime's responsibility. Build an approval map at startup from `tools/list` and check it before each call.
+
+**Agent Framework users:** `MCPStreamableHTTPTool` defaults to requiring approval, and when no handler is wired up the runtime silently drops the call (empty response, no error). Pass `approval_mode="never_require"` to auto-allow:
+
+```python
+from agent_framework.tools.mcp import MCPStreamableHTTPTool
+
+tool = MCPStreamableHTTPTool(
+    url=os.environ["TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT"],
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Foundry-Features": "Toolboxes=V1Preview",
+    },
+    load_prompts=False,
+    approval_mode="never_require",  # or wire an approval handler
+)
+```
+
+For human-in-the-loop, use a custom approval handler instead of `"never_require"`.
 
 ## Verifying the connection
 
 ```bash
 TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-curl -sS "$TOOLBOX_AGENT_TOOLS_ENDPOINT" \
+curl -sS "$TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Foundry-Features: Toolboxes=V1Preview" \
   -H "Accept: application/json, text/event-stream" \
@@ -163,15 +182,16 @@ A `200` with a JSON-RPC body listing the tools means the wire is intact. Each to
 
 | Symptom                                                | Likely cause                                                                                |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `TOOLBOX_<NAME>_ENDPOINT` not set                      | Never ran `azd ai toolbox show` + `azd env set`. Run them, then `azd deploy`.               |
+| `TOOLBOX_<NAME>_MCP_ENDPOINT` not set                  | Never ran `azd ai toolbox show` + `azd env set`. Run them, then `azd deploy`.               |
 | Env var not visible to deployed agent                  | `<service>/agent.yaml` is missing the `environment_variables[]` entry. Add it + `azd deploy`. |
 | `400` with `Toolboxes` in the message                  | Missing `Foundry-Features: Toolboxes=V1Preview` header.                                     |
 | `401` on MCP calls                                     | Expired token or wrong scope. Use `https://ai.azure.com/.default`.                          |
 | `403 Forbidden`                                        | Caller missing `Foundry User` role; or for `UserEntraToken`, the user lacks rights on the downstream service. |
 | `404` on the version-pinned URL                        | Version was deleted. Re-run `azd ai toolbox show` to refresh, or switch to the consumer URL. |
 | `500` on `prompts/list`                                | Foundry's MCP server doesn't implement it. Pass `load_prompts=False` to your MCP client.    |
-| `500` on `send_ping()`                                 | Same -- disable the ping in your client (Agent Framework: override `_ensure_connected`).    |
+| `500` on `send_ping()` (generic MCP client)            | Same -- disable the ping. Agent Framework already handles this; only an issue for clients that hard-fail on ping. |
 | `500` with non-streaming `tools/call`                  | Non-streaming not supported. Use `stream=True` / streamable HTTP transport.                 |
+| Empty response, no error, agent never calls the tool   | Likely a `require_approval: always` tool with no approval handler wired up. Pass `approval_mode="never_require"` to Agent Framework's `MCPStreamableHTTPTool`, or wire an approval handler. |
 | `500` on `tools/list`                                  | Transient. Retry after a few seconds.                                                       |
 | `CONSENT_REQUIRED` (`-32007`)                          | OAuth connection needs user consent. Open the URL from `error.message`; retry afterwards.   |
 | `tools/list` returns zero tools                        | The connection backing the tool has invalid credentials, or the toolbox version is still provisioning. Verify with `azd ai agent connection list --output json` and `azd ai toolbox show`. |
