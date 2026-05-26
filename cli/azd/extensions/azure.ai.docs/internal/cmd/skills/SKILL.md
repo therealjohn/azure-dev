@@ -93,10 +93,15 @@ For **subscription** or **location**, try in order:
 4. Ask the developer.
 5. Last resort, with explicit consent: `az account list --output json`.
 
-For the **Foundry project ARM ID** (`--project-id`), there's no safe `az` fallback. Try `azd ai agent project show --output json`; otherwise ask the developer and include this hint:
+For the **Foundry project ARM ID** (`--project-id`), FIRST ask the developer:
 
-> Open https://ai.azure.com -> Operate -> Admin -> select your project -> Copy the Resource ID.
+> "Do you want to create a new Foundry project, or use an existing one?"
 
+* **New project** -- do NOT pass `--project-id`. `azd provision` will create the project. Proceed without it.
+* **Existing project** -- ask the developer for the ARM resource ID and include this hint:
+  > Open https://ai.azure.com -> Operate -> Admin -> select your project -> Copy the Resource ID.
+
+Do NOT assume the developer has an existing project and jump straight to asking for an ID.
 Don't shell out to `az cognitiveservices` or `az resource list` for the project ID -- they return the wrong resource shape.
 
 ## Confirmation envelope (exit 2)
@@ -118,7 +123,7 @@ For the full envelope shape, see `azd ai doc agent operate`.
 
 ## When to stop and ask
 
-* `--project-id` when not provided. Ask first; share the portal hint above.
+* `--project-id` when not provided -- but FIRST ask whether the developer wants a new project or an existing one (see "Resolving subscription, location, project ID" above). Only ask for the ID when they confirm they have an existing project.
 * Picking a model deployment when multiple are available.
 * Any `confirmation_required` envelope (unless prior turn already named it).
 * Any nonzero exit from `auth login --check-status`, `provision`, or `deploy` that lacks a `next_step` block.

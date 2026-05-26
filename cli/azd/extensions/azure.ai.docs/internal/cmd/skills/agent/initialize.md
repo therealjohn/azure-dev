@@ -112,6 +112,18 @@ First, decide which path you are on. This decision drives every remaining flag.
 
 The interactive picker (no `-m`, no `--from-code`) is for human-driven flows only. NEVER use it under `--no-prompt`.
 
+### Decision: new Foundry project or existing?
+
+BEFORE running `azd ai agent init`, you MUST ask the human:
+
+> "Do you want to create a new Foundry project, or use an existing one?"
+
+**New project** -- the human has no Foundry project yet (or wants a fresh one). Do NOT pass `--project-id`. Let `azd provision` create the project later (Step 3c). Proceed directly to the Greenfield or Brownfield init below, omitting `--project-id`.
+
+**Existing project** -- the human already has a Foundry project they want to target. Ask them for the project's ARM resource ID: "Open the Foundry portal at https://ai.azure.com -> Operate -> Admin -> select your project -> Copy the Resource ID." Pass this value as `--project-id`. Do NOT shell out to `az cognitiveservices ...` to discover it.
+
+Do NOT assume the human has an existing project. Do NOT skip this question and jump straight to asking for an ID.
+
 ### Greenfield: start from a curated sample (the common case)
 
 Run `azd ai agent sample list` first (see the `samples` topic) to fetch a `manifestUrl` from the curated catalog. Do NOT guess or hand-author a manifest URL.
@@ -120,7 +132,11 @@ Run `azd ai agent sample list` first (see the `samples` topic) to fetch a `manif
 # 1. Discover a manifest URL
 azd ai agent sample list --featured-only --language python --output json
 
-# 2. Init with the picked manifestUrl
+# 2a. Init for a NEW project (no --project-id; azd provision will create it)
+azd ai agent init --no-prompt \
+  -m "<manifestUrl-from-sample-list>"
+
+# 2b. Init targeting an EXISTING project
 azd ai agent init --no-prompt \
   --project-id "<projectResourceId>" \
   -m "<manifestUrl-from-sample-list>"
@@ -133,6 +149,14 @@ azd ai agent init --no-prompt \
 ONLY use `--from-code` when the workspace already contains hand-written agent source the user wants lifted into a hosted Foundry agent.
 
 ```bash
+# New project (no --project-id)
+azd ai agent init --no-prompt \
+  --from-code \
+  --deploy-mode code \
+  --runtime python_3_13 \
+  --entry-point app.py
+
+# Existing project
 azd ai agent init --no-prompt \
   --project-id "<projectResourceId>" \
   --from-code \
@@ -147,7 +171,7 @@ Full flag set:
 
 - `-m, --manifest <url-or-path>` -- agent manifest source (greenfield default). Mutually exclusive with `--from-code`. Get candidates from `azd ai agent sample list --output json` (the `manifestUrl` field).
 - `--from-code` -- use the code in cwd as the agent source. BROWNFIELD ONLY -- requires hand-written agent source already in the workspace. Mutually exclusive with `-m`. Do NOT pass this just because `--no-prompt` complains about a missing source; pick a sample with `-m` instead.
-- `-p, --project-id <resourceId>` -- Foundry project ARM ID. Required in `--no-prompt`. If the human has not given you one, STOP and ask them: "Open the Foundry portal at https://ai.azure.com -> Operate -> Admin -> select your project -> Copy the Resource ID." Do NOT shell out to `az cognitiveservices ...` to discover it.
+- `-p, --project-id <resourceId>` -- Foundry project ARM ID. ONLY pass this when the human confirmed they have an existing project. See "Decision: new Foundry project or existing?" above. Do NOT shell out to `az cognitiveservices ...` to discover it.
 - `--agent-name <name>` -- Foundry agent name written to `agent.yaml`. Reusing a name creates a new version of the existing agent.
 - `--model <name>` -- model id (e.g. `gpt-4.1-mini`). Defaults to `gpt-4.1-mini`. Mutually exclusive with `--model-deployment` (`--model-deployment` wins if both are given).
 - `-d, --model-deployment <name>` -- name of an existing model deployment on the Foundry project. Only valid when paired with `--project-id`.
