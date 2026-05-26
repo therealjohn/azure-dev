@@ -14,36 +14,36 @@ The path through this topic is linear:
 
 ---
 
-## Step 1 -- Verify identity and project context
+## Step 1 -- Verify the Foundry project endpoint
 
-ALWAYS run this BEFORE any other agent command, even read-only ones. It tells you which Azure subscription, tenant, and Foundry project endpoint the rest of the workflow will target.
+ALWAYS run this BEFORE any other agent command, even read-only ones. It tells you which Foundry project endpoint the rest of the workflow will target, and which cascade level supplied it (so you know whether to trust it or prompt the developer to set it).
 
 ```bash
-azd ai agent project show --output json
+azd ai project show --output json
 ```
 
-Success payload (all fields optional; trust the keys you see):
+Success payload:
 
 ```json
 {
-  "subscription": { "id": "11111111-2222-3333-4444-555555555555" },
-  "tenant": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  "location": "eastus2",
-  "resourceGroup": "rg-myteam",
-  "projectEndpoint": "https://contoso.services.ai.azure.com/api/projects/myproj",
-  "projectEndpointSource": "azdEnv",
-  "foundryAccount": "contoso",
-  "projectName": "myproj"
+  "endpoint": "https://contoso.services.ai.azure.com/api/projects/myproj",
+  "source": "azdEnv",
+  "sourceDetail": "azd env",
+  "azdEnv": "dev",
+  "setAt": "",
+  "fromLegacyAgentsConfig": false
 }
 ```
 
-`projectEndpointSource` is one of `flag`, `azdEnv`, `globalConfig`, or `foundryEnv`. Empty payload (e.g. `{}`) means none of the cascade levels produced a value -- branch to `azd ai agent init` (Step 3a) without asking the human.
+`source` is one of `flag`, `azdEnv`, `globalConfig`, or `foundryEnv`. `setAt` is only meaningful when `source == "globalConfig"`. `fromLegacyAgentsConfig` is true only on the one-time migration run that read from the removed `azd ai agent project set` legacy key.
 
-Exit codes: `0` always (this command never fails when ANY field can be resolved). A nonzero exit means the azd host itself is unreachable; show the error to the human.
+Exit codes: `0` on success. A nonzero exit means no endpoint could be resolved from any cascade level -- the error suggests `azd ai project set <endpoint>`. If the developer hasn't initialized an agent project yet, branch to `azd ai agent init` (Step 3a) instead of asking them to set an endpoint by hand.
 
-### Resolving subscription / location when `project show` is empty
+This command does NOT return subscription, tenant, location, resource group, or Foundry account name. For those, see the next section.
 
-If you still need a subscription or location (e.g. the human has not chosen a Foundry project yet and you need to seed `--project-id` or a `provision` location), keep using `azd` -- do NOT shell out to `az`:
+### Resolving subscription / location
+
+If you need a subscription or location (e.g. to seed `--project-id` or a `provision` location), keep using `azd` -- do NOT shell out to `az`:
 
 1. `azd config get defaults` -- returns the user-level azd defaults as JSON: `{ "location": "...", "subscription": "..." }`. These are the same defaults the interactive prompts seed.
 2. `azd env get-values` -- the active azd environment's variables (look for `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `AZURE_AI_PROJECT_ENDPOINT`).
@@ -70,7 +70,7 @@ Two possible shapes. Branch on `.status`.
   "next_step": {
     "suggestions": [
       {
-        "command": "azd ai agent project show --output json",
+        "command": "azd ai project show --output json",
         "description": "Inspect identity, subscription, and project context."
       },
       {
@@ -238,7 +238,7 @@ You need Azure resources provisioned. This is NOT an `azd ai agent` command -- u
 azd provision --no-prompt
 ```
 
-After provision succeeds, re-run Step 1; `projectEndpoint` should populate. Full deploy lifecycle (provision + deploy + verify) lives in the `deploy` topic.
+After provision succeeds, re-run Step 1; `endpoint` should populate. Full deploy lifecycle (provision + deploy + verify) lives in the `deploy` topic.
 
 ---
 

@@ -13,7 +13,7 @@ Audience: an AI coding assistant tracing a deployed agent for the user. Every co
 Always call these two first when investigating any agent issue:
 
 ```bash
-azd ai agent project show --output json
+azd ai project show --output json
 azd ai agent show --output json
 ```
 
