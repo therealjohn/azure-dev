@@ -75,7 +75,7 @@ configuration and the current azd environment. Optionally specify the service na
 			// situational-awareness call BEFORE anything is deployed.
 			//
 			// The `next_step` envelope points at both:
-			//   - `azd ai agent project show` for surrounding context
+			//   - `azd ai project show` for surrounding context
 			//   - `azd ai agent init` / `azd deploy` for forward action
 			info, infoErr := resolveAgentServiceFromProject(ctx, azdClient, flags.name, extCtx.NoPrompt)
 			if infoErr != nil || info == nil || info.AgentName == "" || info.Version == "" {
@@ -160,7 +160,7 @@ func renderNotDeployed(output string, infoErr error, info *AgentServiceInfo) err
 	next := &nextStepEnvelope{
 		Suggestions: []nextStepSuggestion{
 			{
-				Command:     "azd ai agent project show --output json",
+				Command:     "azd ai project show --output json",
 				Description: "Inspect identity, subscription, and project context.",
 			},
 		},

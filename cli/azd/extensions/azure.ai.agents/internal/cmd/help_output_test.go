@@ -58,7 +58,7 @@ func TestDocsAndAgentSkillsSection_ListsAgentReadCommands(t *testing.T) {
 	for _, want := range []string{
 		"Docs & Agent Skills:",
 		"azd ai agent show",
-		"azd ai agent project show",
+		"azd ai project show",
 		"azd ai agent doctor",
 		"azd ext install azure.ai.docs",
 		"azd ai doc",

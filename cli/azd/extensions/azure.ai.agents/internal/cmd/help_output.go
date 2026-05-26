@@ -141,7 +141,7 @@ func resolveGetStartedPreamble(ctx context.Context) string {
 		return formatGetStarted(
 			"No Foundry project endpoint resolved. Get started with:",
 			"azd provision             Provision Foundry resources for this project.",
-			"azd ai agent project show Inspect the current project context.",
+			"azd ai project show       Inspect the current project context.",
 		)
 	}
 
@@ -340,8 +340,8 @@ func docsAndAgentSkillsSection() string {
 	b.WriteString("\n  Inspect state, identity, and health from the terminal:\n\n")
 	// Each line: blue command + blue --output flag + yellow json + padded description.
 	// The visible width is len(cmd) + " --output json" (14) = cmd+14. Aim
-	// for description column 50 -- the longest cmd is "azd ai agent project show"
-	// (25 chars) + 14 = 39, +11 spaces = 50.
+	// for description column 50 -- the longest cmd is "azd ai project show"
+	// (19 chars) + 14 = 33, +17 spaces = 50.
 	docLine := func(cmd, desc string) {
 		const col = 48
 		visible := len(cmd) + len(" --output json")
@@ -357,7 +357,7 @@ func docsAndAgentSkillsSection() string {
 		b.WriteString("\n")
 	}
 	docLine("azd ai agent show", "Inspect the deployed agent record (JSON).")
-	docLine("azd ai agent project show", "Inspect identity, subscription, and project context.")
+	docLine("azd ai project show", "Inspect identity, subscription, and project context.")
 	docLine("azd ai agent doctor", "Diagnose configuration, auth, and deployment issues.")
 	b.WriteString("\n  Agent-friendly workflow docs (install the azure.ai.docs extension):\n\n")
 	// These lines are plain commands, no --output flag.
