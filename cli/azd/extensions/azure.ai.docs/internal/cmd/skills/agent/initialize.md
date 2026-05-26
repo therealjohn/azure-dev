@@ -185,6 +185,35 @@ Full flag set:
 - `--no-prompt` -- refuses interactive prompts; flags must supply every required value, otherwise the command emits a structured `validation` error that names the missing flag.
 - `-o, --output json` -- machine-readable progress (when supported).
 
+### Manifest parameters (`parameters:` block)
+
+A sample manifest may declare a `parameters:` block whose values get substituted into `{{name}}` placeholders elsewhere in the manifest (typically inside `resources[].credentials:` or template `environment_variables:`).
+
+```yaml
+parameters:
+  github_pat:
+    secret: true
+    description: GitHub PAT (ghp_... or github_pat_...)
+  region:
+    description: Default Azure region
+    default: eastus2
+```
+
+Interactive init prompts the developer for each parameter. Under `--no-prompt`, init uses the `default:` when present and FAILS for any required parameter without a default; secret parameters ALWAYS fail under `--no-prompt`. Init does not currently expose a `--param key=value` flag.
+
+When the target manifest declares parameters:
+
+1. Fetch the manifest (`curl <manifestUrl>`) and read its `parameters:` block before running init.
+2. **Ask the developer** for each value. Surface the `description:` so they understand what is being requested. Don't echo `secret: true` values back to chat.
+3. Drop `--no-prompt` from your init invocation and let the developer answer the prompts in their terminal. This is the only deterministic way to feed values into init today.
+
+If you genuinely cannot reach the developer (fully autonomous flow with no chat channel), make a best-effort pass:
+
+* For each declared parameter, set its eventual deploy-time env var if not already set. Credential parameters land in `azure.yaml` as `${PARAM_<UPPER_CONN_NAME>_<UPPER_KEY_PATH>}` -- see `azd ai doc connection auth-types` for the naming rule. Run `azd env get-values` first; only `azd env set PARAM_<...> "<placeholder>"` for names that are missing so you don't overwrite a value the developer already provided.
+* Init itself will still fail if any required parameter lacks a default -- surface that failure to the developer rather than masking it. Don't fall back to `--from-code` to dodge the parameter prompts; that picks a completely different scaffolding path.
+
+Manifests with no `parameters:` block (e.g. the basic echo sample) work directly under `--no-prompt`.
+
 Init writes files into the working directory. There is no confirmation envelope on init -- it's a non-destructive create. Files written:
 
 - `azure.yaml` (or appends a new ai.agent service to an existing one)
