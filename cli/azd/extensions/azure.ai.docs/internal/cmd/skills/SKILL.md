@@ -27,7 +27,7 @@ azd ai agent show --output json
 Branch on `show`'s `.status`:
 
 * `active` / `deployed`, the developer wants to **diagnose or change remote state** -> `investigate` or `operate`.
-* `active` / `deployed`, the developer wants to **add a new tool, toolbox, or connection** -> read `azd ai doc toolbox add` and `azd ai doc connection add` / `manage`. **`azd deploy` does NOT create or update toolboxes for post-init projects** -- you must run `azd ai toolbox create` / `connection add` yourself, then set the `TOOLBOX_<NAME>_MCP_ENDPOINT` env var, then `azd deploy` so the agent picks the URL up.
+* `active` / `deployed`, the developer wants to **add a new tool, toolbox, or connection** -> read `azd ai doc toolbox add`, `azd ai doc toolbox consume` (agent-side code patterns), and `azd ai doc connection add` / `manage`. **`azd deploy` does NOT create or update toolboxes for post-init projects** -- you must run `azd ai toolbox create` / `connection add` yourself, then set the `TOOLBOX_<NAME>_MCP_ENDPOINT` env var, update the agent code to wire the new tool, then `azd deploy` so the deployed container picks up the new env var and tool.
 * `active` / `deployed`, the developer wants to **change agent code or local config** -> `configure` / `extend`, then `develop` to iterate locally before redeploying.
 * `not_deployed` with `next_step.suggestions[]` -> run the suggested command. For a greenfield init, always start with `azd ai agent sample list --output json` to pick a `manifestUrl`, then `azd ai agent init -m <manifestUrl>`. Use `--from-code` only when the cwd already has hand-written agent source.
 * Anything else -> `azd ai agent doctor --output json` and surface failing checks.

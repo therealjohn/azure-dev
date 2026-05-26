@@ -146,23 +146,36 @@ For MCP tools, each `tools/list` entry includes `_meta.tool_configuration.requir
 
 The toolbox MCP proxy does NOT enforce this -- it always executes `tools/call`. Gating is your agent runtime's responsibility. Build an approval map at startup from `tools/list` and check it before each call.
 
-**Agent Framework users:** `MCPStreamableHTTPTool` defaults to requiring approval, and when no handler is wired up the runtime silently drops the call (empty response, no error). Pass `approval_mode="never_require"` to auto-allow:
+**Agent Framework users:** `MCPStreamableHTTPTool` defaults to requiring approval, and when no handler is wired up the runtime silently drops the call (empty response, no error). Pass `approval_mode="never_require"` to auto-allow.
+
+**Do NOT pass `headers=` with a static bearer token.** Tokens acquired once at startup expire after ~1 hour. Long-running agent processes will start returning `401` mid-session. Use an `httpx.AsyncClient` with a `request` event hook so a fresh token is acquired before every MCP call:
 
 ```python
+import os
+import httpx
+from azure.identity import DefaultAzureCredential
 from agent_framework.tools.mcp import MCPStreamableHTTPTool
 
+_credential = DefaultAzureCredential()
+
+def _inject_auth(request: httpx.Request) -> None:
+    # Called before every MCP request -- always fresh, never expired.
+    token = _credential.get_token("https://ai.azure.com/.default").token
+    request.headers["Authorization"] = f"Bearer {token}"
+    request.headers["Foundry-Features"] = "Toolboxes=V1Preview"
+
 tool = MCPStreamableHTTPTool(
+    name="github",            # sets the server_label prefix on tool names
     url=os.environ["TOOLBOX_AGENT_TOOLS_MCP_ENDPOINT"],
-    headers={
-        "Authorization": f"Bearer {token}",
-        "Foundry-Features": "Toolboxes=V1Preview",
-    },
-    load_prompts=False,
-    approval_mode="never_require",  # or wire an approval handler
+    httpx_client=httpx.AsyncClient(event_hooks={"request": [_inject_auth]}),
+    load_prompts=False,           # Foundry does not implement prompts/list
+    approval_mode="never_require",  # GitHub MCP marks every tool require_approval:always
 )
 ```
 
-For human-in-the-loop, use a custom approval handler instead of `"never_require"`.
+Install: `pip install httpx azure-identity`.
+
+For human-in-the-loop approval, wire a custom handler instead of `"never_require"`. The `name=` parameter becomes the MCP server label prefix (e.g. `name="github"` -> tools appear as `github.list_repos` etc.).
 
 ## Verifying the connection
 
@@ -185,7 +198,7 @@ A `200` with a JSON-RPC body listing the tools means the wire is intact. Each to
 | `TOOLBOX_<NAME>_MCP_ENDPOINT` not set                  | Never ran `azd ai toolbox show` + `azd env set`. Run them, then `azd deploy`.               |
 | Env var not visible to deployed agent                  | `<service>/agent.yaml` is missing the `environment_variables[]` entry. Add it + `azd deploy`. |
 | `400` with `Toolboxes` in the message                  | Missing `Foundry-Features: Toolboxes=V1Preview` header.                                     |
-| `401` on MCP calls                                     | Expired token or wrong scope. Use `https://ai.azure.com/.default`.                          |
+| `401` on MCP calls                                     | Expired token or wrong scope. Use `https://ai.azure.com/.default`. For Agent Framework, use an httpx event hook for per-request token refresh instead of a static token. |
 | `403 Forbidden`                                        | Caller missing `Foundry User` role; or for `UserEntraToken`, the user lacks rights on the downstream service. |
 | `404` on the version-pinned URL                        | Version was deleted. Re-run `azd ai toolbox show` to refresh, or switch to the consumer URL. |
 | `500` on `prompts/list`                                | Foundry's MCP server doesn't implement it. Pass `load_prompts=False` to your MCP client.    |
