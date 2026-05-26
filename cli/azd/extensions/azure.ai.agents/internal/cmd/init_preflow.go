@@ -40,8 +40,11 @@ import (
 
 	"azureaiagent/internal/exterrors"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/azure/azure-dev/cli/azd/pkg/output"
+	"github.com/azure/azure-dev/cli/azd/pkg/ux"
 	"github.com/fatih/color"
 )
 
@@ -125,6 +128,10 @@ type InitPreflowAction struct {
 	// 3-valued outcome (Copied / Skipped / Failed). Injected so tests
 	// can drive every branch deterministically.
 	copyClip func(text string) ClipboardOutcome
+	// azureContext holds the Azure subscription/tenant scope resolved
+	// during Q4 (Foundry project selection). Seeded empty by the caller
+	// so methods can populate it without allocating.
+	azureContext *azdext.AzureContext
 }
 
 // Run executes the pre-flow. Returns (handled, err) where:
@@ -176,9 +183,28 @@ func (a *InitPreflowAction) Run(ctx context.Context) (bool, error) {
 		installedAt = path
 	}
 
+	// Q4: Foundry project selection.
+	project, credential, err := a.askFoundryProject(ctx)
+	if err != nil {
+		return true, err
+	}
+
+	projectId := ""
+	if project != nil {
+		projectId = project.ResourceId
+	}
+
+	// Q5: Model deployment selection.
+	modelDeployment, err := a.askModelDeployment(ctx, project, credential)
+	if err != nil {
+		return true, err
+	}
+
 	body, err := renderStarterPrompt(StarterPromptVars{
-		ProjectPath: a.cwd,
-		SkillPath:   installedAt,
+		ProjectPath:      a.cwd,
+		SkillPath:        installedAt,
+		FoundryProjectId: projectId,
+		ModelDeployment:  modelDeployment,
 	})
 	if err != nil {
 		return true, fmt.Errorf("render starter prompt: %w", err)
@@ -510,4 +536,310 @@ func (a *InitPreflowAction) printReadyToGo(target preflowTarget, installedAt str
 	fmt.Fprintln(a.out, output.WithLinkFormat("https://aka.ms/azd-ai-agent-docs"))
 	fmt.Fprintln(a.out, output.WithGrayFormat("      Or run `azd ai doc agent` for the agent-friendly topic index."))
 	fmt.Fprintln(a.out)
+}
+
+// --- Q4: Foundry project selection ---
+
+// askFoundryProject is Q4. Presents the "use existing / create new" choice for the
+// Foundry project. When "use existing" is chosen it prompts for an Azure subscription
+// (without persisting to any azd environment), lists projects in that subscription,
+// and lets the user pick one. When "create new" is chosen, prompts for subscription
+// and location to enable model catalog browsing in Q5.
+//
+// Returns (project, credential, error):
+//   - project != nil with full details: user selected an existing project; credential
+//     is valid and was used to list projects (caller may reuse it for model deployment listing in Q5).
+//   - project != nil with only SubscriptionId and Location: user chose "Create a new Foundry project"
+//     and selected subscription/location; credential is valid for that subscription.
+//   - project == nil: user chose "Create a new Foundry project" from initial prompt and there
+//     are no existing projects to list; credential is nil.
+func (a *InitPreflowAction) askFoundryProject(
+	ctx context.Context,
+) (*FoundryProjectInfo, azcore.TokenCredential, error) {
+	choices := []*azdext.SelectChoice{
+		{Label: "Use an existing Foundry project", Value: "existing"},
+		{Label: "Create a new Foundry project", Value: "new"},
+	}
+
+	resp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+		Options: &azdext.SelectOptions{
+			Message: "Select a Foundry project to host your agent",
+			Choices: choices,
+		},
+	})
+	if err != nil {
+		if exterrors.IsCancellation(err) {
+			return nil, nil, exterrors.Cancelled("initialization was cancelled")
+		}
+		return nil, nil, fmt.Errorf("prompt Foundry project choice: %w", err)
+	}
+	if resp == nil || resp.Value == nil || choices[*resp.Value].Value == "new" {
+		// User chose "Create a new Foundry project" — prompt for subscription and location
+		// so Q5 can browse the model catalog.
+		subscriptionId, location, credential, err := promptSubscriptionAndLocationPreflow(ctx, a.azdClient)
+		if err != nil {
+			return nil, nil, err
+		}
+		// Return a minimal project info with just subscription and location
+		// (no actual project since we're creating new).
+		return &FoundryProjectInfo{
+			SubscriptionId: subscriptionId,
+			Location:       location,
+		}, credential, nil
+	}
+
+	// User wants an existing project -- resolve subscription and credential.
+	subscriptionId, credential, err := a.getPreflowSubscriptionCredential(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// List Foundry projects from ARM (no env writes).
+	spinner := ux.NewSpinner(&ux.SpinnerOptions{
+		Text:        "Searching for Foundry projects in your subscription...",
+		ClearOnStop: true,
+	})
+	if err := spinner.Start(ctx); err != nil {
+		return nil, nil, fmt.Errorf("start spinner: %w", err)
+	}
+	projects, listErr := listFoundryProjects(ctx, credential, subscriptionId)
+	if stopErr := spinner.Stop(ctx); stopErr != nil {
+		return nil, nil, stopErr
+	}
+	if listErr != nil {
+		return nil, nil, fmt.Errorf("list Foundry projects: %w", listErr)
+	}
+
+	if len(projects) == 0 {
+		fmt.Fprintln(a.out, output.WithGrayFormat(
+			"No Foundry projects found in the selected subscription. The coding agent will create one."))
+		return nil, nil, nil
+	}
+
+	// Build select choices from the project list.
+	projectChoices := make([]*azdext.SelectChoice, 0, len(projects)+1)
+	for i, p := range projects {
+		projectChoices = append(projectChoices, &azdext.SelectChoice{
+			Label: fmt.Sprintf("%s / %s (%s)", p.AccountName, p.ProjectName, p.Location),
+			Value: fmt.Sprintf("%d", i),
+		})
+	}
+	projectChoices = append(projectChoices, &azdext.SelectChoice{
+		Label: "Create a new Foundry project",
+		Value: "__create_new__",
+	})
+
+	projectResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+		Options: &azdext.SelectOptions{
+			Message: "Select a Foundry project",
+			Choices: projectChoices,
+		},
+	})
+	if err != nil {
+		if exterrors.IsCancellation(err) {
+			return nil, nil, exterrors.Cancelled("initialization was cancelled")
+		}
+		return nil, nil, fmt.Errorf("select Foundry project: %w", err)
+	}
+
+	selectedIdx := int(*projectResp.Value)
+	if selectedIdx < 0 || selectedIdx >= len(projects) {
+		// "Create a new Foundry project" was chosen from the list.
+		// Prompt for location so Q5 can browse the model catalog.
+		location, locationErr := a.promptLocationPreflow(ctx)
+		if locationErr != nil {
+			return nil, nil, locationErr
+		}
+		// Return minimal project info with subscription and location for Q5.
+		return &FoundryProjectInfo{
+			SubscriptionId: subscriptionId,
+			Location:       location,
+		}, credential, nil
+	}
+
+	selected := projects[selectedIdx]
+	return &selected, credential, nil
+}
+
+// getPreflowSubscriptionCredential prompts for an Azure subscription (without persisting
+// to any azd environment) and returns the subscription ID plus a matching credential.
+// This is intentionally lightweight: the preflow runs before an azd environment exists,
+// so we cannot use ensureSubscription (which writes AZURE_SUBSCRIPTION_ID to env).
+func (a *InitPreflowAction) getPreflowSubscriptionCredential(
+	ctx context.Context,
+) (string, azcore.TokenCredential, error) {
+	subResp, err := a.azdClient.Prompt().PromptSubscription(ctx, &azdext.PromptSubscriptionRequest{})
+	if err != nil {
+		if exterrors.IsCancellation(err) {
+			return "", nil, exterrors.Cancelled("initialization was cancelled")
+		}
+		return "", nil, fmt.Errorf("select Azure subscription: %w", err)
+	}
+	if subResp == nil || subResp.Subscription == nil {
+		return "", nil, fmt.Errorf("no subscription selected")
+	}
+
+	tenantId := subResp.Subscription.UserTenantId
+
+	// Resolve the credential using the user-access tenant (not the resource tenant).
+	cred, err := azidentity.NewAzureDeveloperCLICredential(&azidentity.AzureDeveloperCLICredentialOptions{
+		TenantID:                   tenantId,
+		AdditionallyAllowedTenants: []string{"*"},
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("create Azure credential: %w", err)
+	}
+
+	return subResp.Subscription.Id, cred, nil
+}
+
+// promptLocationPreflow prompts for an Azure location without writing to the environment.
+// Used when creating a new Foundry project in the preflow.
+func (a *InitPreflowAction) promptLocationPreflow(ctx context.Context) (string, error) {
+	allowedLocations, err := supportedRegionsForInit(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Println("Select an Azure location. This determines which models are available and where your Foundry project resources will be deployed.")
+	locationName, err := promptLocationForInit(ctx, a.azdClient, &azdext.AzureContext{
+		Scope: &azdext.AzureScope{},
+	}, allowedLocations)
+	if err != nil {
+		return "", err
+	}
+
+	return locationName, nil
+}
+
+// --- Q5: Model deployment selection ---
+
+// askModelDeployment is Q5. When a Foundry project was selected in Q4 (project != nil
+// with full details), offers "Use an existing model deployment" / "Create a new" / "Skip".
+// When creating a new project (project has only SubscriptionId and Location), offers
+// "Create a new" / "Skip" and uses the model catalog for selection. Otherwise (no project
+// at all from Q4) only "Create a new" / "Skip" are offered.
+//
+// credential must be the one returned by askFoundryProject; it is used to list deployments
+// when selecting an existing deployment, or to access the model catalog when creating new.
+func (a *InitPreflowAction) askModelDeployment(
+	ctx context.Context,
+	project *FoundryProjectInfo,
+	credential azcore.TokenCredential,
+) (string, error) {
+	// Determine if we have a full project (can list existing deployments) or just
+	// subscription/location (creating new project).
+	hasFullProject := project != nil && project.ResourceGroupName != "" && project.AccountName != ""
+	hasAzureContext := project != nil && project.SubscriptionId != "" && project.Location != ""
+
+	var choices []*azdext.SelectChoice
+	if hasFullProject {
+		// Full project — offer all three choices
+		choices = []*azdext.SelectChoice{
+			{Label: "Use an existing model deployment", Value: "existing"},
+			{Label: "Create a new model deployment", Value: "new"},
+			{Label: "Skip model deployment selection", Value: "skip"},
+		}
+	} else {
+		// No project or creating new project — only "Create new" or "Skip"
+		choices = []*azdext.SelectChoice{
+			{Label: "Create a new model deployment", Value: "new"},
+			{Label: "Skip model deployment selection", Value: "skip"},
+		}
+	}
+
+	resp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+		Options: &azdext.SelectOptions{
+			Message: "Model deployment: how would you like to proceed?",
+			Choices: choices,
+		},
+	})
+	if err != nil {
+		if exterrors.IsCancellation(err) {
+			return "", exterrors.Cancelled("initialization was cancelled")
+		}
+		return "", fmt.Errorf("prompt model deployment choice: %w", err)
+	}
+	if resp == nil || resp.Value == nil {
+		return "", nil
+	}
+
+	selectedValue := choices[*resp.Value].Value
+
+	switch selectedValue {
+	case "existing":
+		// List deployments in the selected project.
+		spinner := ux.NewSpinner(&ux.SpinnerOptions{
+			Text:        "Searching for model deployments in your Foundry project...",
+			ClearOnStop: true,
+		})
+		if err := spinner.Start(ctx); err != nil {
+			return "", fmt.Errorf("start spinner: %w", err)
+		}
+		deployments, listErr := listProjectDeployments(
+			ctx, credential,
+			project.SubscriptionId, project.ResourceGroupName, project.AccountName,
+		)
+		if stopErr := spinner.Stop(ctx); stopErr != nil {
+			return "", stopErr
+		}
+		if listErr != nil {
+			return "", fmt.Errorf("list model deployments: %w", listErr)
+		}
+
+		if len(deployments) == 0 {
+			fmt.Fprintln(a.out, output.WithGrayFormat(
+				"No model deployments found in the selected project. The coding agent will create one."))
+			return "", nil
+		}
+
+		deployChoices := make([]*azdext.SelectChoice, 0, len(deployments))
+		for _, d := range deployments {
+			label := fmt.Sprintf("%s (%s v%s)", d.Name, d.ModelName, d.Version)
+			deployChoices = append(deployChoices, &azdext.SelectChoice{
+				Label: label,
+				Value: d.Name,
+			})
+		}
+
+		deployResp, err := a.azdClient.Prompt().Select(ctx, &azdext.SelectRequest{
+			Options: &azdext.SelectOptions{
+				Message: "Select a model deployment",
+				Choices: deployChoices,
+			},
+		})
+		if err != nil {
+			if exterrors.IsCancellation(err) {
+				return "", exterrors.Cancelled("initialization was cancelled")
+			}
+			return "", fmt.Errorf("select model deployment: %w", err)
+		}
+
+		deployIdx := int(*deployResp.Value)
+		if deployIdx < 0 || deployIdx >= len(deployments) {
+			return "", nil
+		}
+		return deployments[deployIdx].Name, nil
+
+	case "new":
+		// Create a new model deployment — browse the model catalog.
+		if !hasAzureContext {
+			// No subscription/location available (shouldn't happen with current flow,
+			// but handle defensively).
+			return "", nil
+		}
+		modelDeploymentName, err := selectModelCatalogPreflow(
+			ctx, a.azdClient, project.SubscriptionId, project.Location,
+		)
+		if err != nil {
+			return "", err
+		}
+		return modelDeploymentName, nil
+
+	case "skip":
+		return "", nil
+
+	default:
+		return "", nil
+	}
 }

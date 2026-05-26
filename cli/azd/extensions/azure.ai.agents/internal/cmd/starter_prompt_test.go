@@ -16,27 +16,42 @@ import (
 func TestRenderStarterPrompt_SubstitutesProjectPath(t *testing.T) {
 	got, err := renderStarterPrompt(StarterPromptVars{
 		ProjectPath: "/home/user/my-app",
-		SkillPath:   ".claude/skills/azd-ai-skill",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, got, "/home/user/my-app",
 		"starter prompt must substitute the ProjectPath into the body")
-	assert.Contains(t, got, ".claude/skills/azd-ai-skill",
-		"starter prompt must mention the skill install path when one was supplied")
 }
 
-func TestRenderStarterPrompt_OmitsInstallClauseWhenSkillPathEmpty(t *testing.T) {
-	// Q2=No path: the user declined the skill install, so the prompt
-	// must not claim a non-existent install path.
+func TestRenderStarterPrompt_IncludesFoundryProjectId(t *testing.T) {
+	projectId := "/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/acct/projects/proj"
 	got, err := renderStarterPrompt(StarterPromptVars{
-		ProjectPath: "/home/user/my-app",
-		SkillPath:   "",
+		ProjectPath:      "/home/user/my-app",
+		FoundryProjectId: projectId,
 	})
 	require.NoError(t, err)
-	assert.Contains(t, got, "azd ai",
-		"starter prompt must still tell the user to use azd ai when no skill is installed")
-	assert.NotContains(t, got, "skill at",
-		"starter prompt must not reference a skill install path when SkillPath is empty")
+	assert.Contains(t, got, projectId,
+		"starter prompt must include the Foundry project resource ID when provided")
+}
+
+func TestRenderStarterPrompt_IncludesModelDeployment(t *testing.T) {
+	got, err := renderStarterPrompt(StarterPromptVars{
+		ProjectPath:     "/home/user/my-app",
+		ModelDeployment: "gpt-4o-deployment",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, got, "gpt-4o-deployment",
+		"starter prompt must include the model deployment name when provided")
+	assert.Contains(t, got, "If a model deployment is needed",
+		"starter prompt must include the conditional model deployment instruction")
+}
+
+func TestRenderStarterPrompt_OmitsFoundryBlocksWhenEmpty(t *testing.T) {
+	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/home/user/my-app"})
+	require.NoError(t, err)
+	assert.NotContains(t, got, "Use Foundry project",
+		"starter prompt must not mention a Foundry project when FoundryProjectId is empty")
+	assert.NotContains(t, got, "If a model deployment is needed",
+		"starter prompt must not mention model deployment when ModelDeployment is empty")
 }
 
 func TestRenderStarterPrompt_HasNoTrailingWhitespace(t *testing.T) {
@@ -45,61 +60,33 @@ func TestRenderStarterPrompt_HasNoTrailingWhitespace(t *testing.T) {
 	assert.Equal(t, got, strings.TrimRight(got, " \t\n"), "output should not end with whitespace")
 }
 
-// TestRenderStarterPrompt_IncludesCoreInstructions pins the two
-// contracts the prompt MUST carry on the user-facing side:
-//
-//   - tell the agent to use `azd ai` (the skill content handles the
-//     rest -- topic chooser, command shapes, envelope mechanics);
-//   - the human-readable ask-first contract so the user knows they
-//     will be consulted before billing-impacting steps.
-//
-// We deliberately do NOT pin SKILL.md jargon ("greenfield",
-// "manifestUrl", "AZD AI skill", "azd ai doc agent <topic>") here --
-// those belong in the skill itself, not in a one-paragraph starter
-// prompt the user is about to paste into a coding agent.
+// TestRenderStarterPrompt_IncludesCoreInstructions pins the contracts the prompt
+// MUST carry: tell the agent to use `azd ai`, and the ask-first contract so the user
+// knows they will be consulted before billing-impacting steps.
 func TestRenderStarterPrompt_IncludesCoreInstructions(t *testing.T) {
 	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/x"})
 	require.NoError(t, err)
 
-	wantPhrases := []string{
-		"azd ai",
-		"Ask me",
-	}
+	wantPhrases := []string{"azd ai", "Ask me"}
 	for _, want := range wantPhrases {
 		assert.Contains(t, got, want, "starter prompt must mention %q", want)
 	}
 
-	// The prompt must NOT chain --from-code after --no-prompt. The skill
-	// directs coding agents to pick a curated sample via
-	// `azd ai agent sample list` and pass `-m <manifestUrl>` instead;
-	// `--from-code` is reserved for brownfield projects. Pin the bad
-	// PAIR rather than the flag in isolation so this test still works
-	// if `--from-code` is mentioned in passing somewhere.
 	assert.NotContains(t, got, "--no-prompt --from-code",
 		"starter prompt must NOT instruct the coding agent to chain --from-code after --no-prompt")
 }
 
-// TestRenderStarterPrompt_IsBrief pins the simplification at a coarse
-// level: a verbose, jargon-heavy starter prompt defeats the purpose of
-// installing the AZD AI skill (which already covers commands, flag
-// tables, envelope mechanics, and the topic chooser). The agent-
-// friendly target is well under 100 words; the cap leaves headroom for
-// substituted ProjectPath / SkillPath while still catching regressions.
+// TestRenderStarterPrompt_IsBrief pins the word-count cap. The ARM resource ID from
+// FoundryProjectId can be long, so the cap is checked on the baseline (no optional fields).
 func TestRenderStarterPrompt_IsBrief(t *testing.T) {
-	got, err := renderStarterPrompt(StarterPromptVars{
-		ProjectPath: "/x",
-		SkillPath:   ".claude/skills/azd-ai-skill",
-	})
+	got, err := renderStarterPrompt(StarterPromptVars{ProjectPath: "/x"})
 	require.NoError(t, err)
 	words := len(strings.Fields(got))
-	assert.LessOrEqual(t, words, 100,
-		"starter prompt should be a brief statement of intent, not a "+
-			"step-by-step recipe; got %d words. If you need to grow it, "+
-			"first ask whether the new content belongs in the skill body "+
-			"(azure.ai.docs) instead.", words)
+	assert.LessOrEqual(t, words, 60,
+		"starter prompt (baseline, no optional fields) should be brief; got %d words", words)
 }
 
-// mapClipboardEnv is the test-only clipboardEnv: a simple map.
+
 type mapClipboardEnv map[string]string
 
 func (m mapClipboardEnv) Lookup(key string) (string, bool) {

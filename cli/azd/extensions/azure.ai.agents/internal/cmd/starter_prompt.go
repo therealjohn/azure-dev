@@ -36,16 +36,24 @@ import (
 var starterPromptFS embed.FS
 
 // StarterPromptVars is the data shape passed to the agent-init template.
-// All fields are optional; the template renders sensible output when
-// SkillPath is empty (user chose Q2=No -> "install skill?" was declined).
+// All fields are optional; the template renders sensible output when any
+// field is empty.
 type StarterPromptVars struct {
 	// ProjectPath is the absolute path to the project root (typically
 	// the user's current working directory).
 	ProjectPath string
-	// SkillPath is the relative path where the AZD AI skill
-	// was installed (e.g. ".claude/skills/azd-ai-skill"). Empty
-	// when no install ran in this session.
+	// SkillPath is the relative path where the AZD AI skill was installed
+	// (e.g. ".claude/skills/azd-ai-skill"). Kept for struct compatibility
+	// but not referenced by the agent_init.md template.
 	SkillPath string
+	// FoundryProjectId is the full ARM resource ID of the Foundry project
+	// the user selected in the pre-flow (Q4). Empty when the user chose
+	// "Create a new Foundry project" or skipped.
+	FoundryProjectId string
+	// ModelDeployment is the name of the model deployment the user
+	// selected in the pre-flow (Q5). Empty when the user chose "Create
+	// a new model deployment", "Skip", or no project was selected.
+	ModelDeployment string
 }
 
 // renderStarterPrompt returns the rendered agent-init prompt body with

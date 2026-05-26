@@ -678,11 +678,12 @@ func newInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 					return fmt.Errorf("resolve working directory: %w", cwdErr)
 				}
 				preflow := &InitPreflowAction{
-					out:       cmd.OutOrStdout(),
-					azdClient: azdClient,
-					runner:    defaultAzdRunner,
-					cwd:       cwd,
-					copyClip:  CopyToClipboard,
+					out:          cmd.OutOrStdout(),
+					azdClient:    azdClient,
+					runner:       defaultAzdRunner,
+					cwd:          cwd,
+					copyClip:     CopyToClipboard,
+					azureContext: &azdext.AzureContext{Scope: &azdext.AzureScope{}},
 				}
 				handled, preErr := preflow.Run(ctx)
 				if preErr != nil {
