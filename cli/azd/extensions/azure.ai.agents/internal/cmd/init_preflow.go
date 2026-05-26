@@ -576,20 +576,27 @@ func (a *InitPreflowAction) askFoundryProject(
 	if resp == nil || resp.Value == nil || choices[*resp.Value].Value == "new" {
 		// User chose "Create a new Foundry project" — prompt for subscription and location
 		// so Q5 can browse the model catalog.
-		subscriptionId, location, credential, err := promptSubscriptionAndLocationPreflow(ctx, a.azdClient)
+		subscriptionId, tenantId, location, credential, err := promptSubscriptionAndLocationPreflow(ctx, a.azdClient)
 		if err != nil {
 			return nil, nil, err
 		}
-		// Return a minimal project info with just subscription and location
+		// Return a minimal project info with subscription, tenant, and location
 		// (no actual project since we're creating new).
 		return &FoundryProjectInfo{
 			SubscriptionId: subscriptionId,
+			TenantId:       tenantId,
 			Location:       location,
 		}, credential, nil
 	}
 
 	// User wants an existing project -- resolve subscription and credential.
 	subscriptionId, credential, err := a.getPreflowSubscriptionCredential(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get the tenant ID from the credential resolution
+	tenantId, err := a.getTenantForSubscription(ctx, subscriptionId)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -650,14 +657,17 @@ func (a *InitPreflowAction) askFoundryProject(
 		if locationErr != nil {
 			return nil, nil, locationErr
 		}
-		// Return minimal project info with subscription and location for Q5.
+		// Return minimal project info with subscription, tenant, and location for Q5.
 		return &FoundryProjectInfo{
 			SubscriptionId: subscriptionId,
+			TenantId:       tenantId,
 			Location:       location,
 		}, credential, nil
 	}
 
 	selected := projects[selectedIdx]
+	// Also store the tenant ID in the selected project
+	selected.TenantId = tenantId
 	return &selected, credential, nil
 }
 
@@ -691,6 +701,20 @@ func (a *InitPreflowAction) getPreflowSubscriptionCredential(
 	}
 
 	return subResp.Subscription.Id, cred, nil
+}
+
+// getTenantForSubscription looks up the tenant ID for a given subscription.
+func (a *InitPreflowAction) getTenantForSubscription(
+	ctx context.Context,
+	subscriptionId string,
+) (string, error) {
+	tenantResp, err := a.azdClient.Account().LookupTenant(ctx, &azdext.LookupTenantRequest{
+		SubscriptionId: subscriptionId,
+	})
+	if err != nil {
+		return "", fmt.Errorf("lookup tenant for subscription: %w", err)
+	}
+	return tenantResp.TenantId, nil
 }
 
 // promptLocationPreflow prompts for an Azure location without writing to the environment.
@@ -829,7 +853,7 @@ func (a *InitPreflowAction) askModelDeployment(
 			return "", nil
 		}
 		modelDeploymentName, err := selectModelCatalogPreflow(
-			ctx, a.azdClient, project.SubscriptionId, project.Location,
+			ctx, a.azdClient, project.SubscriptionId, project.TenantId, project.Location,
 		)
 		if err != nil {
 			return "", err

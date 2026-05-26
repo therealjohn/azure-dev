@@ -30,6 +30,7 @@ import (
 // This is the unified type used by both init flows.
 type FoundryProjectInfo struct {
 	SubscriptionId    string
+	TenantId          string // user-access tenant; used by preflow for model catalog browsing
 	ResourceGroupName string
 	AccountName       string
 	ProjectName       string
@@ -1339,25 +1340,25 @@ func selectModelDeployment(
 
 // promptSubscriptionAndLocationPreflow prompts for subscription and location without
 // writing to the azd environment. Used by the agent-ready preflow which runs before
-// the environment is fully initialized. Returns subscription ID, location, and credential.
+// the environment is fully initialized. Returns subscription ID, tenant ID, location, and credential.
 func promptSubscriptionAndLocationPreflow(
 	ctx context.Context,
 	azdClient *azdext.AzdClient,
-) (subscriptionId string, location string, credential azcore.TokenCredential, err error) {
+) (subscriptionId string, tenantId string, location string, credential azcore.TokenCredential, err error) {
 	// Prompt for subscription
 	subResp, err := azdClient.Prompt().PromptSubscription(ctx, &azdext.PromptSubscriptionRequest{})
 	if err != nil {
 		if exterrors.IsCancellation(err) {
-			return "", "", nil, exterrors.Cancelled("subscription selection was cancelled")
+			return "", "", "", nil, exterrors.Cancelled("subscription selection was cancelled")
 		}
-		return "", "", nil, fmt.Errorf("select Azure subscription: %w", err)
+		return "", "", "", nil, fmt.Errorf("select Azure subscription: %w", err)
 	}
 	if subResp == nil || subResp.Subscription == nil {
-		return "", "", nil, fmt.Errorf("no subscription selected")
+		return "", "", "", nil, fmt.Errorf("no subscription selected")
 	}
 
 	subscriptionId = subResp.Subscription.Id
-	tenantId := subResp.Subscription.UserTenantId
+	tenantId = subResp.Subscription.UserTenantId
 
 	// Create credential scoped to the user-access tenant
 	cred, err := azidentity.NewAzureDeveloperCLICredential(&azidentity.AzureDeveloperCLICredentialOptions{
@@ -1365,13 +1366,13 @@ func promptSubscriptionAndLocationPreflow(
 		AdditionallyAllowedTenants: []string{"*"},
 	})
 	if err != nil {
-		return "", "", nil, fmt.Errorf("create Azure credential: %w", err)
+		return "", "", "", nil, fmt.Errorf("create Azure credential: %w", err)
 	}
 
 	// Prompt for location
 	allowedLocations, err := supportedRegionsForInit(ctx)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", "", nil, err
 	}
 
 	fmt.Println("Select an Azure location. This determines which models are available and where your Foundry project resources will be deployed.")
@@ -1382,10 +1383,10 @@ func promptSubscriptionAndLocationPreflow(
 		},
 	}, allowedLocations)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", "", nil, err
 	}
 
-	return subscriptionId, locationName, cred, nil
+	return subscriptionId, tenantId, locationName, cred, nil
 }
 
 // selectModelCatalogPreflow shows the AI model catalog and prompts the user to select
@@ -1396,11 +1397,13 @@ func selectModelCatalogPreflow(
 	ctx context.Context,
 	azdClient *azdext.AzdClient,
 	subscriptionId string,
+	tenantId string,
 	location string,
 ) (modelDeploymentName string, err error) {
 	azureContext := &azdext.AzureContext{
 		Scope: &azdext.AzureScope{
 			SubscriptionId: subscriptionId,
+			TenantId:       tenantId,
 			Location:       location,
 		},
 	}
