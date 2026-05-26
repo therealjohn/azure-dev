@@ -490,24 +490,24 @@ func (a *InitPreflowAction) printReadyToGo(target preflowTarget, installedAt str
 	fmt.Fprintln(a.out)
 
 	if installedAt != "" {
-		fmt.Fprintf(a.out, "Your agent will use the AZD AI skill at %s\n", installedAt)
-		fmt.Fprintln(a.out, "to scaffold, provision, and deploy a Foundry agent tailored")
-		fmt.Fprintln(a.out, "to your project.")
+		fmt.Fprintln(a.out, output.WithGrayFormat("Your agent will use the AZD AI skill at %s", installedAt))
+		fmt.Fprintln(a.out, output.WithGrayFormat("to scaffold, provision, and deploy a Foundry agent tailored"))
+		fmt.Fprintln(a.out, output.WithGrayFormat("to your project."))
 	} else {
-		fmt.Fprintln(a.out, "Your agent will follow the starter prompt to scaffold, provision,")
-		fmt.Fprintln(a.out, "and deploy a Foundry agent tailored to your project.")
+		fmt.Fprintln(a.out, output.WithGrayFormat("Your agent will follow the starter prompt to scaffold, provision,"))
+		fmt.Fprintln(a.out, output.WithGrayFormat("and deploy a Foundry agent tailored to your project."))
 	}
 	fmt.Fprintln(a.out)
 
 	fmt.Fprintln(a.out, color.New(color.Bold).Sprint("Prefer to set up manually?"))
-	fmt.Fprintln(a.out, "  azd ai agent init             Run the interactive scaffolder yourself.")
-	fmt.Fprintln(a.out, "  azd provision                 Provision Foundry resources.")
-	fmt.Fprintln(a.out, "  azd deploy                    Deploy the agent.")
-	fmt.Fprintln(a.out, "  azd ai agent show             Inspect the deployed agent.")
+	fmt.Fprintln(a.out, output.WithGrayFormat("  azd ai agent init             Run the interactive scaffolder yourself."))
+	fmt.Fprintln(a.out, output.WithGrayFormat("  azd provision                 Provision Foundry resources."))
+	fmt.Fprintln(a.out, output.WithGrayFormat("  azd deploy                    Deploy the agent."))
+	fmt.Fprintln(a.out, output.WithGrayFormat("  azd ai agent show             Inspect the deployed agent."))
 	fmt.Fprintln(a.out)
 
-	fmt.Fprint(a.out, "Docs: ")
+	fmt.Fprint(a.out, output.WithGrayFormat("Docs: "))
 	fmt.Fprintln(a.out, output.WithLinkFormat("https://aka.ms/azd-ai-agent-docs"))
-	fmt.Fprintln(a.out, "      Or run `azd ai doc agent` for the agent-friendly topic index.")
+	fmt.Fprintln(a.out, output.WithGrayFormat("      Or run `azd ai doc agent` for the agent-friendly topic index."))
 	fmt.Fprintln(a.out)
 }
