@@ -1,0 +1,1 @@
+Governance E2E fixture for detecting a pull request that duplicates recently merged work.
